@@ -246,7 +246,7 @@ It runs the test suite, self-tests the built program, publishes the SHA256 into 
 log where it cannot be edited afterwards, and records a provenance attestation:
 
 ```bash
-gh attestation verify passphrase-recovery-*.zip --repo <owner>/<repo>
+gh attestation verify passphrase-recovery-*.zip --repo tristanjo/recover
 ```
 
 Python is pinned to 3.12 there: coincurve publishes wheels through 3.13, and on 3.14 the
