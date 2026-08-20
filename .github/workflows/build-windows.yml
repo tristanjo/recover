@@ -103,13 +103,23 @@ jobs:
         # stdout, so the exit code carries the verdict and --report carries the detail.
         run: |
           $ErrorActionPreference = "Continue"
-          dist\passphrase-recovery\passphrase-recovery.exe --self-test --report self-test.txt
-          $code = $LASTEXITCODE
+          Remove-Item self-test.txt, stdout.txt, stderr.txt -ErrorAction SilentlyContinue
+          # Start-Process -Wait, not a bare invocation. This is a GUI-subsystem executable,
+          # and a shell does not wait for one of those: calling it directly returns at once,
+          # leaves $LASTEXITCODE unset, and checks the report file before the program has
+          # had a chance to write it. That is what the previous two runs were reporting.
+          $p = Start-Process -FilePath "dist\passphrase-recovery\passphrase-recovery.exe" `
+                 -ArgumentList "--self-test","--report","self-test.txt" `
+                 -NoNewWindow -Wait -PassThru `
+                 -RedirectStandardOutput stdout.txt -RedirectStandardError stderr.txt
+          $code = $p.ExitCode
           Write-Host "exit code: $code"
-          Write-Host "working directory: $(Get-Location)"
+          if (Test-Path stdout.txt) { Write-Host "--- stdout ---"; Get-Content stdout.txt }
+          if ((Test-Path stderr.txt) -and (Get-Item stderr.txt).Length -gt 0) {
+            Write-Host "--- stderr ---"; Get-Content stderr.txt
+          }
           if (Test-Path self-test.txt) {
-            Write-Host "--- self-test.txt ---"
-            Get-Content self-test.txt
+            Write-Host "--- self-test.txt ---"; Get-Content self-test.txt
           } else {
             Write-Host "self-test.txt was not written; files here:"
             Get-ChildItem -Name | Select-Object -First 30

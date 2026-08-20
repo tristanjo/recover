@@ -228,6 +228,27 @@ windowed Windows build has no stdout, so the exit code carries the verdict and
 `--report FILE` carries the detail — which is how CI checks *the binary it is about to
 ship*, rather than a console-mode stand-in.
 
+### Running --self-test on Windows
+
+A shell does not wait for a GUI-subsystem executable. Typing
+
+```
+passphrase-recovery.exe --self-test --report self-test.txt
+```
+
+into `cmd` returns the prompt immediately, prints nothing, and leaves `%ERRORLEVEL%`
+meaningless — while the program is still running behind it. Nothing is wrong; the shell
+simply moved on. Read `self-test.txt` once it appears, or wait for it explicitly:
+
+```powershell
+$p = Start-Process .\passphrase-recovery.exe -ArgumentList "--self-test","--report","self-test.txt" `
+       -NoNewWindow -Wait -PassThru
+$p.ExitCode
+```
+
+For anyone not at a terminal, the window's first screen has a self-test button, which is
+the same check with the result on screen.
+
 ### Two things the spec exists to fix
 
 `wallycore` reaches its native library through `importlib.import_module("_wallycore")`,
