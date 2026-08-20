@@ -102,15 +102,26 @@ jobs:
         # The binary tested here is the one that ships. A windowed Windows build has no
         # stdout, so the exit code carries the verdict and --report carries the detail.
         run: |
+          $ErrorActionPreference = "Continue"
           dist\passphrase-recovery\passphrase-recovery.exe --self-test --report self-test.txt
-          if ($LASTEXITCODE -ne 0) { Get-Content self-test.txt; exit 1 }
-          Get-Content self-test.txt
+          $code = $LASTEXITCODE
+          Write-Host "exit code: $code"
+          Write-Host "working directory: $(Get-Location)"
+          if (Test-Path self-test.txt) {
+            Write-Host "--- self-test.txt ---"
+            Get-Content self-test.txt
+          } else {
+            Write-Host "self-test.txt was not written; files here:"
+            Get-ChildItem -Name | Select-Object -First 30
+          }
+          if ($code -ne 0) { Write-Error "self-test exited $code"; exit 1 }
 
       - name: Check the built program kept its crypto backend
         # The report names the backend the frozen program actually selected. Grepping for
         # the fallback's warning would not work: it is written to stderr at import time,
         # before the program can capture anything.
         run: |
+          if (-not (Test-Path self-test.txt)) { Write-Error "no self-test report to check"; exit 1 }
           if (-not (Select-String -Path self-test.txt -Pattern "secp256k1 backend: (coincurve|wallycore)" -Quiet)) {
             Get-Content self-test.txt
             Write-Error "the built program did not select a C secp256k1 backend"

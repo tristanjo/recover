@@ -500,7 +500,16 @@ def self_test_from_terminal(report_path=None):
             return 1
     for line in lines[:3]:
         print(line)
-    return code
+
+    # Leave with exactly the code we decided on. The search leaves worker processes and a
+    # pool behind, and anything that goes wrong while the interpreter tears those down
+    # would otherwise overwrite the verdict -- a passing self-test reported as a failure.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except (OSError, ValueError):
+            pass
+    os._exit(code)
 
 
 def main():
