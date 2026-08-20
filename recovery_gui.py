@@ -488,8 +488,9 @@ def self_test_from_terminal(report_path=None):
         lines.append("")
         lines.append(result.log.strip())
 
-    for line in lines[:3]:
-        print(line)
+    # Write the record before printing it. Printing is the part that can fail -- a console
+    # that cannot encode Hangul takes the whole verdict with it otherwise, which is how
+    # this was found.
     if report_path:
         try:
             with open(report_path, "w", encoding="utf-8") as f:
@@ -497,6 +498,8 @@ def self_test_from_terminal(report_path=None):
         except OSError as e:
             print("보고 파일을 쓸 수 없습니다:", e)
             return 1
+    for line in lines[:3]:
+        print(line)
     return code
 
 

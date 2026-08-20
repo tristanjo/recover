@@ -203,6 +203,30 @@ class FrozenStart(unittest.TestCase):
         embed._ensure_streams()
         self.assertIs(sys.stdout, before)
 
+    def test_a_console_that_cannot_encode_hangul_is_repaired(self):
+        """A Windows console encodes as cp1252, which has no Hangul at all.
+
+        BTCRecover prints from its workers at the moment a match is found, and a seed
+        phrase from the Korean wordlist would raise on its first character -- making
+        success the one outcome that crashes.
+        """
+        import io as _io
+        saved = sys.stdout
+        buffer = _io.BytesIO()
+        try:
+            sys.stdout = _io.TextIOWrapper(buffer, encoding="cp1252")
+            with self.assertRaises(UnicodeEncodeError):     # the failure being fixed
+                print("비밀번호2024")
+                sys.stdout.flush()
+
+            sys.stdout = _io.TextIOWrapper(_io.BytesIO(), encoding="cp1252")
+            embed._ensure_streams()
+            print("비밀번호2024")                            # must not raise
+            sys.stdout.flush()
+            self.assertEqual(sys.stdout.encoding.lower().replace("-", ""), "utf8")
+        finally:
+            sys.stdout = saved
+
 
 if __name__ == '__main__':
     unittest.main()

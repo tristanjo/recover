@@ -65,15 +65,31 @@ def prepare_frozen_start():
 
 
 def _ensure_streams():
-    """Give print() somewhere to go when the build has no console.
+    """Give print() somewhere to go, and something it is able to encode.
+
+    Two ways this breaks, both of which strike at the worst possible moment -- when a
+    match is found and BTCRecover prints it from a worker process.
 
     A windowed PyInstaller executable leaves sys.stdout and sys.stderr as None, and any
-    print() then raises. BTCRecover prints from its worker processes at the moment a
-    match is found -- so without this, success would be the one outcome that crashes.
+    print() then raises.
+
+    A Windows console encodes as cp1252, in which Hangul has no representation at all.
+    A recovered seed phrase from the Korean wordlist, or any Korean message, raises
+    UnicodeEncodeError on its first character.
     """
     for name in ("stdout", "stderr"):
-        if getattr(sys, name, None) is None:
+        stream = getattr(sys, name, None)
+        if stream is None:
             setattr(sys, name, open(os.devnull, "w", encoding="utf-8", errors="replace"))
+        elif hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError, LookupError):
+                try:
+                    # UTF-8 refused; at least stop an unencodable character from raising
+                    stream.reconfigure(errors="replace")
+                except (OSError, ValueError):
+                    pass
 
 
 class SearchPlan:
