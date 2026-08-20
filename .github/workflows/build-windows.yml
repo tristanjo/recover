@@ -11,6 +11,10 @@ name: Build Windows recovery program
 
 on:
   push:
+    # Tags are what produce a release. main also builds, because a break that only shows
+    # up on Windows should surface on the commit that caused it, rather than on a tag
+    # pushed to find out.
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
     inputs:
