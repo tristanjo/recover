@@ -188,6 +188,8 @@ def run(plan, mnemonic, progress=None, abort=None, threads=None, skip=0):
         if progress:
             progress(tried, remaining)
 
+    _share_tk_root()
+
     with _search_lock:
         btcrpass.progress_hook = on_progress
         btcrpass.abort_event = abort
@@ -228,6 +230,27 @@ _search_lock = threading.Lock()
 def _clean_exit_message(exc):
     message = str(exc.code) if exc.code not in (None, 0) else "search exited early"
     return message.replace("Error: ", "").strip() or "search exited early"
+
+
+def _share_tk_root():
+    """Lend btcrseed the host's Tk root so it never builds a second one.
+
+    A process may hold only one Tk instance; creating a second after the first exists
+    segfaults on macOS rather than raising. btcrseed builds its own root when a required
+    input is missing and it has to ask the user. A SearchPlan supplies all three of those
+    inputs, so this should be unreachable -- but the failure it prevents would take a
+    running recovery down with it, which is too expensive to leave to "should".
+    """
+    try:
+        import tkinter
+    except ImportError:
+        return
+    root = getattr(tkinter, "_default_root", None)
+    if root is None:
+        return
+    from btcrecover import btcrseed
+    if not btcrseed.tk_root:
+        btcrseed.tk_root = root
 
 
 def _normalization_of(btcrpass, passphrase):

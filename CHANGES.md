@@ -17,6 +17,35 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
+## 2026-08-20 — The offline recovery window
+
+**Changed:** `btcrecover/embed.py`
+**Added:** `recovery_gui.py`, `btcrecover/test/test_recovery_gui.py`
+
+A tkinter window with four screens: check, load the config, type the seed phrase, watch it
+run. Chosen over a heavier toolkit because this is a program strangers are asked to trust —
+a small bundle with few dependencies is a smaller surface to explain and to reproduce.
+
+The seed phrase is typed in the window and held only in memory. The resume file records a
+candidate count and a fingerprint of the config, so a saved position cannot be applied to a
+different search, and holds nothing else. Tests assert that.
+
+Before any of it, the first screen reports whether the machine still has a network route --
+read from the local routing table with no packet sent -- and offers a self-test that
+recovers a known passphrase from the published BIP39 test vector, so an owner can watch the
+program work before trusting it with their own seed.
+
+Two problems found while building it:
+
+* Tkinter allows one `Tk()` per process; a second one segfaults on macOS instead of raising.
+  btcrseed creates its own root when it needs to prompt, so `embed.run` now lends it the
+  host's. A SearchPlan supplies everything btcrseed would ask for, so this should be
+  unreachable -- but a segfault there would take a running recovery with it.
+* The self-test called `after()` from its worker thread, which tkinter does not allow. It
+  polls from the main thread now, as the search already did.
+
+---
+
 ## 2026-08-20 — Running a search from inside an application
 
 **Changed:** `btcrecover/btcrpass.py`

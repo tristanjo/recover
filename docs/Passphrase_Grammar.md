@@ -177,6 +177,39 @@ go: a windowed PyInstaller build leaves `sys.stdout` as `None`, and BTCRecover p
 from its workers at the moment a match is found — so without it, success is the one
 outcome that crashes.
 
+## The recovery window
+
+`recovery_gui.py` is the offline program a wallet owner actually runs. Four screens:
+check, load the config, type the seed phrase, watch it run.
+
+```bash
+python recovery_gui.py
+```
+
+The seed phrase is typed there and nowhere else. It is not in the config, which was
+written on a website, and it is not in the resume file, which holds a candidate count and
+a fingerprint of the config so a position cannot be applied to a different search.
+
+The first screen does two things before any of that. It reports whether the machine still
+has a network route — read from the local routing table, no packet sent — and it offers a
+**self-test**: recovering a known passphrase from the published BIP39 test vector, so
+someone can watch the program work, and watch their network monitor stay silent, before
+trusting it with their own seed phrase.
+
+Stopping is safe: the search halts between chunks and the position is saved, so reopening
+the same config offers to continue.
+
+### One Tk root per process
+
+Tkinter allows exactly one `Tk()` per process; creating a second after destroying the
+first segfaults on macOS rather than raising. btcrseed builds its own root when it needs
+to prompt for something, so `embed.run` lends it the host's root instead. A `SearchPlan`
+supplies everything btcrseed would prompt for, which makes that unreachable — but the
+crash it would cause takes a running recovery with it.
+
+The same rule governs testing: `btcrecover/test/test_recovery_gui.py` shares a single
+window across every test rather than opening one per test.
+
 ## Reading a match
 
 ```
