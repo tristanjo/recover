@@ -1,6 +1,14 @@
 # BTCRecover
 [![Last Push - All Tests (Base Modules)](https://github.com/3rdIteration/btcrecover/workflows/Last%20Push%20-%20All%20Tests%20(Base%20Modules)/badge.svg)](https://github.com/3rdIteration/btcrecover/actions?query=workflow%3A%22Last+Push+-+All+Tests+%28Base+Modules%29%22) [![Weekly - All Tests (Base Modules)](https://github.com/3rdIteration/btcrecover/workflows/Weekly%20-%20All%20Tests%20(Base%20Modules)/badge.svg)](https://github.com/3rdIteration/btcrecover/actions?query=workflow%3A%22Weekly+-+All+Tests+%28Base+Modules%29%22) [![Weekly Run All Tests (Base Modules)](https://github.com/3rdIteration/btcrecover/workflows/Weekly%20-%20All%20Tests%20(+Optional%20Modules)//badge.svg)](https://github.com/3rdIteration/btcrecover/actions?query=workflow%3A%22Weekly+-+All+Tests+%28%2BOptional+Modules%29%22) [![Documentation Status](https://readthedocs.org/projects/btcrecover/badge/?version=latest)](https://btcrecover.readthedocs.io/en/latest/?badge=latest) ![license](https://img.shields.io/badge/license-GPLv2-blue.svg) 
 
+> **This is a fork.** It tracks
+> [3rdIteration/btcrecover](https://github.com/3rdIteration/btcrecover) and adds support for
+> non-ASCII (Hangul, Kana, ...) BIP39 passphrases whose original wallet did not normalize them —
+> see [Non-ASCII (CJK) BIP39 Passphrases](docs/CJK_Passphrase_Normalization.md). Every change is
+> listed in [CHANGES.md](CHANGES.md). Like upstream, it is free software under the
+> [GNU GPL v2 or later](LICENSE.txt): you may read, modify, and redistribute it, and you are
+> entitled to the complete source of any binary built from it.
+
 *BTCRecover* is an open source wallet password and seed recovery tool.
 
 For seed based recovery, this is primarily useful in situations where you have lost/forgotten parts of your mnemonic, or have made an error transcribing it. (So you are either seeing an empty wallet or getting an error that your seed is invalid)

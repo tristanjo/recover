@@ -1,0 +1,168 @@
+--- a/btcrecover/btcrseed.py
++++ b/btcrecover/btcrseed.py
+@@ -1,7 +1,13 @@
+ # btcrseed.py -- btcrecover mnemonic sentence library
+ # Copyright (C) 2014-2017 Christopher Gurnee
+ #               2019-2021 Stephen Rothery
++#               2026      tristanjo
+ #
++# Changed from the upstream 3rdIteration/btcrecover release:
++#   2026-08-20  added --passphrase-normalizations, which derives a seed for each
++#               requested Unicode normalization form of the passphrase rather than
++#               for NFKD alone; see docs/CJK_Passphrase_Normalization.md
++#
+ # This file is part of btcrecover.
+ #
+ # btcrecover is free software: you can redistribute it and/or
+@@ -269,6 +275,40 @@
+     with open(passphraselistFile, "r") as passphraselist_file:
+         return passphraselist_file.read().splitlines()
+ 
++# BIP39 requires the passphrase to be NFKD-normalized before it is used as the
++# PBKDF2 salt, but a number of wallets never normalized what the user typed and
++# hashed it as-is. This only ever matters for non-ASCII passphrases: for Hangul,
++# Kana, and other scripts NFC and NFKD are different byte strings, so they derive
++# completely different seeds. Trying each form makes those wallets recoverable
++# when the passphrase itself is already known to be correct.
++PASSPHRASE_NORMALIZATION_FORMS = ("NFKD", "NFC", "NFD", "NFKC")
++
++# The forms actually tried, in order; set from --passphrase-normalizations in main().
++# The default matches the BIP39 spec, and so preserves the historical behaviour.
++passphrase_normalizations = ("NFKD",)
++
++def parse_passphrase_normalizations(spec):
++    """Parse a --passphrase-normalizations value into an ordered, deduplicated tuple of forms."""
++    if not spec:
++        return ("NFKD",)
++    if spec.strip().lower() == "all":
++        return PASSPHRASE_NORMALIZATION_FORMS
++    forms = []
++    for raw in spec.split(","):
++        form = raw.strip().upper()
++        if not form:
++            continue
++        if form not in PASSPHRASE_NORMALIZATION_FORMS:
++            raise ValueError("unknown Unicode normalization form '{}'; choose from {} or 'all'"
++                             .format(raw.strip(), ", ".join(PASSPHRASE_NORMALIZATION_FORMS)))
++        if form not in forms:
++            forms.append(form)
++    if not forms:
++        raise ValueError("--passphrase-normalizations requires at least one form")
++    # NFKD is what BIP39 specifies, so try it first whenever it was requested
++    forms.sort(key=lambda f: f != "NFKD")
++    return tuple(forms)
++
+ import hmac
+ import hashlib
+ from struct import pack
+@@ -1924,7 +1964,7 @@
+                             #print("Found match with Hash160: ", binascii.hexlify(test_hash160))
+ 
+                             if(len(self._derivation_salts) > 1):
+-                                print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), ": ***MATCHING SEED FOUND***, Matched with BIP39 Passphrase:", salt.decode())
++                                print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), ": ***MATCHING SEED FOUND***, Matched with BIP39 Passphrase:", self._describe_salt(salt))
+ 
+                             return True
+         return False
+@@ -1943,6 +1983,25 @@
+     FIRSTFOUR_TAG = "-firstfour"
+     _checksum_in_generator = False
+ 
++    # Maps each derivation salt to the normalization form it was produced from, so a
++    # match can say which one hit. Subclasses that build _derivation_salts themselves
++    # (e.g. WalletAezeed) simply leave this empty and get the plain passphrase back.
++    _derivation_salt_forms = {}
++
++    def _describe_salt(self, salt):
++        """Render a derivation salt for display, noting which normalization form produced it.
++
++        NFC and NFD render identically on screen, so the form is the only way to tell a
++        recovered passphrase apart from the one the user already typed in."""
++        if salt not in self._derivation_salt_forms:
++            for prefix in (b"mnemonic", b"electrum"):  # _verify_seed() is also called with the salt prefixed
++                if salt.startswith(prefix) and salt[len(prefix):] in self._derivation_salt_forms:
++                    salt = salt[len(prefix):]
++                    break
++        text = salt.decode("utf-8", "replace")
++        form = self._derivation_salt_forms.get(salt)
++        return "{} [{}]".format(text, form) if form else text
++
+     # Load the wordlists for all languages (actual one to use is selected in config_mnemonic() )
+     _language_words = {}
+     @classmethod
+@@ -2008,6 +2067,7 @@
+         passphrases = self._config_mnemonic(mnemonic_guess, lang, passphrases, expected_len, closematch_cutoff)
+ 
+         self._derivation_salts = []
++        self._derivation_salt_forms = {}
+ 
+         # The pbkdf2-derived salt, based on the passphrase, as per BIP39 (needed by _derive_seed());
+         # first ensure that this version of Python supports the characters present in the passphrase
+@@ -2018,9 +2078,17 @@
+                     if 0xD800 <= c <= 0xDBFF or 0xDC00 <= c <= 0xDFFF:
+                         raise ValueError("this version of Python doesn't support passphrases with Unicode code points > "+str(sys.maxunicode))
+ 
+-            _derivation_salt = self._unicode_to_bytes(passphrase)
+-
+-            self._derivation_salts.append(_derivation_salt.encode())
++            # BIP39 mandates NFKD, but wallets which never normalized the passphrase
++            # the user typed will have hashed some other form of it; see the comment
++            # on PASSPHRASE_NORMALIZATION_FORMS. Duplicates are dropped, so an ASCII
++            # passphrase still yields exactly one salt no matter how many forms are
++            # requested (and so costs nothing extra to search).
++            for form in passphrase_normalizations:
++                _derivation_salt = sys.intern(unicodedata.normalize(form, passphrase)).encode()
++                if _derivation_salt in self._derivation_salt_forms:
++                    continue
++                self._derivation_salt_forms[_derivation_salt] = form
++                self._derivation_salts.append(_derivation_salt)
+ 
+         # Special case for wallets which tell users to record only the first four letters of each word;
+         # convert all short words into long ones (intentionally done *after* the finding of close words).
+@@ -2385,6 +2453,10 @@
+         if selected_passphrases is None:
+             selected_passphrases = passphrases
+         self._passphrases = [str(p) for p in selected_passphrases]
++        # aezeed salts the passphrase verbatim rather than following BIP39's NFKD rule,
++        # so discard the form labels the superclass just recorded; they would misreport
++        # which normalization a match came from.
++        self._derivation_salt_forms = {}
+         self._derivation_salts = [
+             (p.encode("utf-8") if p else aezeed.DEFAULT_PASSPHRASE.encode("utf-8"))
+             for p in self._passphrases
+@@ -4291,7 +4363,7 @@
+                 # Check for match
+                 if pubkey in self._known_hash160s:
+                     if salt and len(self._derivation_salts) > 1:
+-                        print("Passphrase:", salt.decode())
++                        print("Passphrase:", self._describe_salt(salt))
+                     return True
+ 
+         return False
+@@ -4741,6 +4813,11 @@
+         parser.add_argument("--passphrase",  action="store_true",       help="the mnemonic is augmented with a known passphrase (BIP39 or Electrum 2.x only)")
+         parser.add_argument("--passphrase-arg",  metavar="PASSPHRASE", nargs="+", help="the mnemonic is augmented with a known passphrase, entered directly as an argument (BIP39 or Electrum 2.x only)")
+         parser.add_argument("--passphrase-list", metavar="FILE", help="Path to a file containing a list of passphrases to test")
++        parser.add_argument("--passphrase-normalizations", metavar="FORMS",
++                            help="Unicode normalization form(s) applied to the passphrase before deriving the seed, comma "
++                                 "separated (NFKD,NFC,NFD,NFKC) or 'all' (default: NFKD, as BIP39 specifies). Use 'all' when "
++                                 "the passphrase contains non-ASCII characters (Hangul, Kana, accents...) and the wallet may "
++                                 "not have normalized it correctly; ASCII passphrases are unaffected")
+         parser.add_argument("--passphrase-prompt", action="store_true", help="prompt for the mnemonic passphrase via the terminal (default: via the GUI)")
+         parser.add_argument("--mnemonic",  metavar="MNEMONIC",       help="Your best guess of the mnemonic (if not entered, you will be prompted)")
+         parser.add_argument("--mnemonic-prompt",   action="store_true", help="prompt for the mnemonic guess via the terminal (default: via the GUI)")
+@@ -4983,6 +5060,14 @@
+                 sys.exit("canceled")
+             config_mnemonic_params["mnemonic_guess"] = mnemonic_guess
+ 
++        global passphrase_normalizations
++        try:
++            passphrase_normalizations = parse_passphrase_normalizations(args.passphrase_normalizations)
++        except ValueError as e:
++            exit("Error: " + str(e))
++        if len(passphrase_normalizations) > 1:
++            print("Passphrase normalization forms to try:", ", ".join(passphrase_normalizations))
++
+         if args.passphrase_prompt:
+             import getpass
+             encoding = sys.stdin.encoding or "ASCII"

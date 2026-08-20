@@ -36,6 +36,7 @@ nav:
         - BIP39 Seed/Token Lists: BIP39_descrambling_seedlists.md
         - Recovery without Addresses (Address Database): Creating_and_Using_AddressDB.md
         - Basic Seed Recovery Examples: Usage_Examples/basic_seed_recoveries.md
+        - Non-ASCII (CJK) BIP39 Passphrases: CJK_Passphrase_Normalization.md
     - Password/Passphrase Recovery:
         - Password Recovery Quickstart: TUTORIAL.md
         - Typos Quick Start Guide: Typos_Quick_Start_Guide.md
