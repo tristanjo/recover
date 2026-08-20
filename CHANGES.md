@@ -17,7 +17,24 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
-## 2026-08-20 — The Windows build works
+## 2026-08-20 — Ask about the passphrase instead of asking for a grammar
+
+**Changed:** `webapp/diagnostic.html`
+
+The diagnostic page asked people to add a "word slot" and tick "optional". That is the
+vocabulary of the thing being built, not of the person who lost a passphrase. It now asks
+six questions — were there words, do you remember their capitalisation, were there digits
+and do you know them or just how many, any symbols, what sat between the pieces, do you
+remember the order — and skips the ones earlier answers made irrelevant. A single piece is
+never asked about separators or ordering.
+
+The answers write the same slots and separators the manual editor edits, so the count, the
+estimate and config.json come from one representation either way. The editor is still
+there, folded away, for what the questions cannot express.
+
+Checked end to end: answering as a customer would ("배우자 이름, 결혼한 해, 느낌표") produces a
+grammar the Python expander agrees with to the candidate, and running that config against
+the unnormalized test wallet recovers 비밀번호2024 at candidate 124 of 20,000 in 0.6 seconds.
 
 Verified on `windows-latest`, from a commit, on a public runner: dependencies, the four
 suites covering this fork, a PyInstaller build in 22 seconds, and the built program
