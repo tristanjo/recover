@@ -47,11 +47,12 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller==6.22.2
 
-      - name: Show which crypto backend was installed
-        # A silent fall back to the pure-Python backend is the failure most likely to go
-        # unnoticed, so make it loud before anything is built.
+      - name: Check which secp256k1 backend got selected
+        # Ask what btcrecover actually chose, rather than whether some library imports:
+        # either C backend is fine, and the pure-Python one is correct but around a
+        # hundredth of the speed, announced by nothing louder than a warning.
         run: |
-          python -c "import coincurve; print('coincurve', coincurve.__version__)"
+          python -c "from btcrecover import crypto_backends as c; print('secp256k1 backend:', c.BACKEND_NAME); raise SystemExit(0 if c.BACKEND_NAME in ('coincurve', 'wallycore') else 'fell back to the pure-Python backend')"
 
       - name: Run the test suite
         # Each module in its own process: test_seeds and test_passwords share global state
@@ -83,12 +84,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { Get-Content self-test.txt; exit 1 }
           Get-Content self-test.txt
 
-      - name: Check it did not silently lose its crypto backend
-        # The self-test passes either way; it is the speed that collapses. Catch it by
-        # looking for the warning the fallback prints.
+      - name: Check the built program kept its crypto backend
+        # The report names the backend the frozen program actually selected. Grepping for
+        # the fallback's warning would not work: it is written to stderr at import time,
+        # before the program can capture anything.
         run: |
-          if (Select-String -Path self-test.txt -Pattern "pure-Python" -Quiet) {
-            Write-Error "built program fell back to the pure-Python secp256k1 backend"
+          if (-not (Select-String -Path self-test.txt -Pattern "secp256k1 backend: (coincurve|wallycore)" -Quiet)) {
+            Get-Content self-test.txt
+            Write-Error "the built program did not select a C secp256k1 backend"
             exit 1
           }
 
@@ -124,6 +127,11 @@ jobs:
         # Lets anyone verify the binary came from this repository at this commit:
         #   gh attestation verify passphrase-recovery-*.zip --repo tristanjo/recover
         if: startsWith(github.ref, 'refs/tags/') || inputs.publish_attestation
+        # Attestations need a public repository (or a paid plan). Until this one goes
+        # public that is expected, and it must not fail a build that is otherwise sound --
+        # the binary and its hash are still produced. Once public, watch this step: the
+        # verifiable chain from commit to binary is the whole reason for building here.
+        continue-on-error: true
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: ${{ env.PACKAGE }}.zip

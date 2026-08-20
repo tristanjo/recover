@@ -466,7 +466,12 @@ def self_test_from_terminal(report_path=None):
     verdict and `report_path` is how a build job reads the detail. That way the binary
     that gets tested is the same one that gets shipped.
     """
-    lines = ["자가검증: 공개 BIP39 테스트 벡터로 알려진 패스프레이즈를 찾습니다."]
+    from btcrecover import crypto_backends
+    # Named explicitly because the fallback announces itself with a warning on stderr at
+    # import time -- long before anything here could capture it. A build that quietly
+    # shipped the pure-Python backend would otherwise pass this test and crawl in the field.
+    lines = ["자가검증: 공개 BIP39 테스트 벡터로 알려진 패스프레이즈를 찾습니다.",
+             "secp256k1 backend: " + crypto_backends.BACKEND_NAME]
     try:
         plan = embed.SearchPlan(SELF_TEST["config"])
         result = embed.run(plan, SELF_TEST["mnemonic"])
@@ -483,7 +488,7 @@ def self_test_from_terminal(report_path=None):
         lines.append("")
         lines.append(result.log.strip())
 
-    for line in lines[:2]:
+    for line in lines[:3]:
         print(line)
     if report_path:
         try:
