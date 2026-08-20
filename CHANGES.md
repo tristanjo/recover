@@ -17,6 +17,39 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
+## 2026-08-20 — Running a search from inside an application
+
+**Changed:** `btcrecover/btcrpass.py`
+**Added:** `btcrecover/embed.py`, `btcrecover/test/test_embed.py`
+
+`btcrpass.main()` assumes a terminal: it prints, and it reports bad input by calling
+`sys.exit`. Two hooks make it embeddable without disturbing that — `progress_hook(tried,
+total)` fires as the search advances and once more when it stops, and `abort_event` is
+polled between chunks so a stop button leaves nothing half-checked. Both default to unset,
+and the command line behaves exactly as before.
+
+`btcrecover.embed` wraps them. It builds the argv from a config.json, hands the grammar to
+btcrpass as its `base_iterator` so no candidate reaches a pipe or a file, and returns a
+`SearchResult` rather than exiting. The mnemonic is a parameter and never comes from the
+config.
+
+`WalletBIP39.normalization_of()` re-derives which Unicode form matched. The worker process
+that found the match printed the form to its own stdout, which an embedding host never
+sees; asking again costs at most four PBKDF2 rounds.
+
+Two hazards found while building this, both of which would have surfaced first as a broken
+executable:
+
+* A host whose module-level code is not behind `if __name__ == "__main__"` fills the machine
+  with processes within seconds, because each spawned worker re-runs the program. This is
+  reproducible in a plain script, not only in a frozen build.
+* A windowed PyInstaller build leaves `sys.stdout` as `None`. BTCRecover prints from its
+  workers at the moment a match is found, so success would be the one outcome that crashes.
+  `embed.prepare_frozen_start()` handles both, and must be the first thing a frozen entry
+  point does.
+
+---
+
 ## 2026-08-20 — Priority ordering for grammar candidates
 
 **Changed:** `btcrecover/passphrase_grammar.py`, `webapp/diagnostic.html`

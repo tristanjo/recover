@@ -133,6 +133,50 @@ past. Skipping 200 million candidates into a 222-million-candidate space is imme
 Slots are indexed rather than materialized: a slot covering every digit string up to
 eight characters is 111,111,110 candidates and costs nothing to construct.
 
+## Running a search from an application
+
+`btcrecover.embed` runs the same search in-process, for a GUI rather than a terminal.
+The grammar goes to btcrpass as its `base_iterator`, so no candidate is ever written to
+a pipe or a file.
+
+```python
+from btcrecover import embed
+
+plan = embed.SearchPlan.from_file("config.json")
+result = embed.run(plan, mnemonic, progress=on_progress, abort=stop_event)
+if result.found:
+    show(result.passphrase, result.normalization)
+elif result.aborted:
+    remember(result.tried)        # pass back as `skip` to resume
+elif result.error:
+    show_error(result.error)
+```
+
+The mnemonic is a parameter and never comes from the config — the config is written on a
+website, and a seed phrase must not be.
+
+`progress(tried, total)` is called from the search thread, including once when the search
+stops, so a progress bar lands where the search ended. `abort` is a `threading.Event`;
+setting it stops between chunks, leaving nothing half-checked. Bad input that would make
+the command line call `sys.exit` comes back as `result.error` instead.
+
+`result.normalization` is re-derived in the calling process. The worker that found the
+match printed the form to its own stdout, which the host never sees.
+
+### Two things a host must do
+
+**Guard your module-level code.** `if __name__ == "__main__":` around everything that
+runs at import. Worker processes start by re-importing the entry module, and without the
+guard each one re-runs the program and starts its own workers. This fills a machine with
+processes in seconds — it is not a slow leak.
+
+**Call `embed.prepare_frozen_start()` first** in a frozen executable, before any other
+work. It installs `multiprocessing.freeze_support()`, which is what stops the same
+runaway when there is no `__main__` guard to reach, and it gives `print()` somewhere to
+go: a windowed PyInstaller build leaves `sys.stdout` as `None`, and BTCRecover prints
+from its workers at the moment a match is found — so without it, success is the one
+outcome that crashes.
+
 ## Reading a match
 
 ```

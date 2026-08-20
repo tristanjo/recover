@@ -4307,6 +4307,26 @@ class WalletBIP39(object):
                 seen.add(pw_bytes)
                 yield pw_bytes, form
 
+    def _verify_variant(self, pw_bytes, salt_prefix):
+        """Derive the seed for one already-normalized passphrase and check the wallet."""
+        seed_bytes = pbkdf2_hmac("sha512", self._mnemonic.encode(), salt_prefix + pw_bytes, 2048)
+        if type(self.btcrseed_wallet) is not btcrecover.btcrseed.WalletXLM:
+            seed_bytes = hmac.new(b"Bitcoin seed", seed_bytes, hashlib.sha512).digest()
+        return self.btcrseed_wallet._verify_seed(seed_bytes)
+
+    def normalization_of(self, passphrase):
+        """Which Unicode normalization form of `passphrase` opens this wallet, if any.
+
+        The worker process that found the match printed the form to its own stdout, which
+        an embedding host never sees. Re-deriving here costs at most four PBKDF2 rounds
+        and answers in the process that asked.
+        """
+        salt_prefix = self._salt_prefix()
+        for pw_bytes, form in self._password_variants(passphrase):
+            if self._verify_variant(pw_bytes, salt_prefix):
+                return form
+        return None
+
     def _report_matched_form(self, form):
         # NFC and NFD look identical on screen, so the form is the only way for the user
         # to reproduce the recovered passphrase in another wallet.
@@ -4321,12 +4341,7 @@ class WalletBIP39(object):
 
         for count, password in enumerate(passwords, 1):
             for pw_bytes, form in self._password_variants(password):
-                seed_bytes = pbkdf2_hmac("sha512", self._mnemonic.encode(), salt_prefix + pw_bytes, 2048)
-
-                if type(self.btcrseed_wallet) is not btcrecover.btcrseed.WalletXLM:
-                    seed_bytes = hmac.new(b"Bitcoin seed", seed_bytes, hashlib.sha512).digest()
-
-                if self.btcrseed_wallet._verify_seed(seed_bytes):
+                if self._verify_variant(pw_bytes, salt_prefix):
                     self._report_matched_form(form)
                     return pw_bytes.decode("utf_8", "replace"), count
 
@@ -5853,6 +5868,17 @@ def _do_safe_print(*args, **kwargs):
 #print = safe_print
 
 # Calls sys.exit with an error message, taking unnamed arguments as print() does
+# Hooks for embedding a search in an application rather than a terminal. The terminal
+# entry points leave both unset and behave exactly as before.
+#
+#   progress_hook(tried, total)  called as the search advances; total is None when the
+#                                caller asked for --no-eta and the count is not known here
+#   abort_event                  polled between chunks; when set the search stops and
+#                                returns like a clean miss, leaving the wallet untouched
+progress_hook = None
+abort_event   = None
+
+
 def error_exit(*messages):
     sys.exit(" ".join(map(str, _do_safe_print("Error:", *messages))))
 
@@ -9939,6 +9965,10 @@ def main():
                     progress.next_update = 0  # force a screen update
                     progress.update(passwords_tried)
                     print()  # move down to the line below the progress bar
+                if progress_hook:
+                    # so an embedding host's progress lands where the search stopped,
+                    # rather than at wherever the previous chunk left it
+                    progress_hook(passwords_tried, None if args.no_eta else passwords_count)
                 break
             passwords_tried += passwords_tried_last
             if progress:
@@ -9947,6 +9977,17 @@ def main():
                     if passwords_counting_result.ready() and not passwords_counting_result.successful():
                         passwords_counting_result.get()
                 progress.update(passwords_tried)
+            if progress_hook:
+                progress_hook(passwords_tried, None if args.no_eta else passwords_count)
+            if abort_event is not None and abort_event.is_set():
+                # Stop between chunks rather than mid-password, so nothing is left half-checked
+                if pool:
+                    pool.close()
+                    _pool = pool
+                if progress:
+                    progress.maxval = passwords_tried
+                    progress.finish()
+                return False, "Search aborted after {:,} passwords".format(passwords_tried)
             if l_savestate and passwords_tried % est_passwords_per_5min == 0:
                 do_autosave(args.skip + passwords_tried)
             # Check if --performance-duration has elapsed
