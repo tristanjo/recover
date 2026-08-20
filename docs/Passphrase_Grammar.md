@@ -270,6 +270,12 @@ log where it cannot be edited afterwards, and records a provenance attestation:
 gh attestation verify passphrase-recovery-*.zip --repo tristanjo/recover
 ```
 
+**Download from the release, not from the run's artifacts.** GitHub re-zips artifacts on
+download: what you save is a wrapper around the zip that was built, with a different hash
+from the one published — so comparing hashes, the one check a recipient can actually
+perform, would always fail. Release assets are served byte for byte as uploaded, which is
+why the tag build attaches the zip to a release and puts the hash in the release notes.
+
 Python is pinned to 3.12 there: coincurve publishes wheels through 3.13, and on 3.14 the
 build would quietly fall back to the slow backend.
 

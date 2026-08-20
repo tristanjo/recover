@@ -31,7 +31,7 @@ concurrency:
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 permissions:
-  contents: read
+  contents: write        # to attach the build to a release
   id-token: write        # for the provenance attestation
   attestations: write
 
@@ -165,6 +165,36 @@ jobs:
             ${{ env.PACKAGE }}.zip
             ${{ env.PACKAGE }}.zip.sha256
           if-no-files-found: error
+
+      - name: Attach the build to a release
+        # Actions artifacts are re-zipped on download: what a visitor saves is GitHub's
+        # wrapper around our zip, with a different hash from the one published above. That
+        # turns "compare the hash" -- the only check a customer can actually perform -- into
+        # a guaranteed mismatch. Release assets are served byte for byte as uploaded, so the
+        # published SHA256 is the hash of the file they end up with.
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = @"
+          Built from ``$env:GITHUB_SHA`` by [this run]($env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID).
+
+          ``````
+          $(Get-Content "$env:PACKAGE.zip.sha256")
+          ``````
+
+          Verify where it came from:
+
+          ``````
+          gh attestation verify $env:PACKAGE.zip --repo $env:GITHUB_REPOSITORY
+          ``````
+
+          Check it works before trusting it with a seed phrase: the window's first screen has
+          a self-test that recovers a known passphrase from the published BIP39 test vector.
+          "@
+          $notes | Out-File -FilePath notes.md -Encoding utf8
+          gh release create $env:GITHUB_REF_NAME "$env:PACKAGE.zip" "$env:PACKAGE.zip.sha256" `
+            --title $env:GITHUB_REF_NAME --notes-file notes.md
 
       - name: Record build provenance
         # Lets anyone verify the binary came from this repository at this commit:
