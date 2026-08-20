@@ -35,9 +35,12 @@ if __name__ == '__main__':
 from btcrecover.passphrase_grammar import PassphraseGrammar, GrammarError
 
 
-def grammar(slots, separators=("",), permute=False):
+def grammar(slots, separators=("",), permute=False, priority=False):
+    # Tests default priority off, so the expected orders below stay readable; the
+    # PriorityOrder class covers the ordering itself (and the shipped default is on).
     return PassphraseGrammar({"passphrase": {
-        "slots": list(slots), "separators": list(separators), "permute_order": permute}})
+        "slots": list(slots), "separators": list(separators),
+        "permute_order": permute, "priority": priority}})
 
 def words(candidates, cases=("asis",), optional=False):
     return {"type": "words", "candidates": list(candidates), "cases": list(cases), "optional": optional}
@@ -247,6 +250,109 @@ class Rejections(unittest.TestCase):
     def test_not_an_object(self):
         with self.assertRaises(GrammarError):
             PassphraseGrammar([1, 2, 3])
+
+
+class PriorityOrder(unittest.TestCase):
+    """Ordering must change only the order. Anything else and the search stops being
+    exhaustive, or `count()` stops describing it."""
+
+    SHAPES = [
+        ("plain",             [words(["a", "b"]), digits(4, 4)], [""], False),
+        ("separators",        [words(["a"]), digits(4, 4)], ["", "-"], False),
+        ("optional",          [words(["a"]), digits(4, 4, optional=True),
+                               symbols(["!"], optional=True)], ["", "-"], False),
+        ("optional+permuted", [words(["a", "b"]), digits(2, 2, optional=True),
+                               symbols(["!"], optional=True)], ["", "-"], True),
+        ("length range",      [words(["a"]), digits(2, 4)], ["", "-"], False),
+        ("digits alone",      [digits(4, 4)], ["-"], False),
+        ("length range spanning the year length",
+                              [digits(3, 5, optional=True)], ["-", "_"], False),
+    ]
+
+    def _pair(self, shape):
+        _, slots, seps, permute = shape
+        return (PassphraseGrammar({"passphrase": {"slots": slots, "separators": seps,
+                                                  "permute_order": permute, "priority": True}}),
+                PassphraseGrammar({"passphrase": {"slots": slots, "separators": seps,
+                                                  "permute_order": permute, "priority": False}}))
+
+    def test_same_candidates_in_a_different_order(self):
+        for shape in self.SHAPES:
+            with self.subTest(shape[0]):
+                ordered, plain = self._pair(shape)
+                a, b = list(ordered.generate()), list(plain.generate())
+                self.assertEqual(sorted(a), sorted(b))
+                self.assertEqual(len(a), len(set(a)))
+
+    def test_count_is_unaffected(self):
+        for shape in self.SHAPES:
+            with self.subTest(shape[0]):
+                ordered, plain = self._pair(shape)
+                self.assertEqual(ordered.count(), plain.count())
+                self.assertEqual(ordered.count(), len(list(ordered.generate())))
+
+    def test_skip_resumes_correctly_when_ordered(self):
+        for shape in self.SHAPES[:4]:
+            with self.subTest(shape[0]):
+                ordered, _ = self._pair(shape)
+                full = list(ordered.generate())
+                for k in (0, 1, 7, len(full) // 2, len(full) - 1, len(full), len(full) + 50):
+                    self.assertEqual(list(ordered.generate(skip=k)), full[k:])
+
+    def test_years_are_tried_first(self):
+        g = PassphraseGrammar({"passphrase": {"slots": [digits(4, 4)], "priority": True}})
+        first = list(g.generate(limit=3))
+        self.assertEqual(first, ["1900", "1901", "1902"])
+
+    def test_non_year_digits_are_still_all_reached(self):
+        g = PassphraseGrammar({"passphrase": {"slots": [digits(4, 4)], "priority": True}})
+        self.assertEqual(sorted(g.generate()), ["{:04d}".format(i) for i in range(10000)])
+
+    def test_a_second_choice_in_one_slot_beats_second_choices_in_two(self):
+        """Two slots that both span the year length, so each has a preferred tier.
+
+        The blocks are year/year, then the two year/other pairings, then other/other.
+        Their sizes are known, so probing the boundaries is exact and instant -- no need
+        to walk four million candidates to see where the cost changes.
+        """
+        g = PassphraseGrammar({"passphrase": {
+            "slots": [digits(4, 4), digits(4, 4)], "separators": ["-"], "priority": True}})
+        years, others = 200, 10000 - 200
+
+        def cost_at(position):
+            left, right = next(g.generate(skip=position)).split("-")
+            return sum(0 if 1900 <= int(part) < 2100 else 1 for part in (left, right))
+
+        self.assertEqual(cost_at(0), 0)                                        # year-year
+        self.assertEqual(cost_at(years * years - 1), 0)                        # last of them
+        self.assertEqual(cost_at(years * years), 1)                            # first year-other
+        self.assertEqual(cost_at(years * years + 2 * years * others - 1), 1)   # last of them
+        self.assertEqual(cost_at(years * years + 2 * years * others), 2)       # other-other
+
+    def test_priority_is_on_by_default(self):
+        g = PassphraseGrammar({"passphrase": {"slots": [digits(4, 4)]}})
+        self.assertTrue(g.priority)
+        self.assertEqual(next(g.generate()), "1900")
+
+    def test_skipping_deep_into_an_ordered_space_is_not_a_walk(self):
+        # 222 million candidates; if this were walking the test would not finish
+        g = PassphraseGrammar({"passphrase": {
+            "slots": [words(["a", "b"]), digits(1, 8)], "priority": True}})
+        self.assertEqual(g.count(), 222222220)
+        self.assertEqual(next(g.generate(skip=200000000)), "b77777780")
+
+    def test_skipping_deep_with_an_optional_slot_is_not_a_walk(self):
+        """Emptiness is fixed within a tier, so this divides its way in as well.
+
+        The first 200 candidates are the four-digit years; candidate 100,000,000 is then
+        99,999,800 into the remaining digit strings, which lands in the eight-digit run.
+        """
+        g = PassphraseGrammar({"passphrase": {
+            "slots": [words(["a"]), digits(1, 8, optional=True)],
+            "separators": ["-"], "priority": True}})
+        self.assertEqual(g.count(), 111111111)      # 111,111,110 digit strings, plus "a" alone
+        self.assertEqual(next(g.generate()), "a-1900")
+        self.assertEqual(next(g.generate(skip=100000000)), "a-88888890")
 
 
 if __name__ == '__main__':

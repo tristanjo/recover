@@ -45,6 +45,14 @@ class GrammarError(ValueError):
     """The grammar document is malformed or describes nothing."""
 
 
+# Digit runs that look like a year are tried before the rest of their length. This is
+# the whole of the priority model for now: a deliberately small, contiguous prior that
+# can be stated and defended ("people put years in passphrases"), sitting where richer
+# statistics from real cases will replace it. Keep any replacement expressible as index
+# ranges -- that is what keeps --skip a division instead of a walk.
+YEAR_RANGE = (1900, 2100)
+YEAR_DIGITS = 4
+
 # Case transforms a "words" slot may apply, in the order they are tried.
 CASES = {
     "asis":  lambda w: w,
@@ -68,6 +76,15 @@ class _Slot:
         if self.optional and i == self.nonempty_len:
             return ""          # the empty value always sorts last, so dropping
         return self.value_at(i)  # `optional` never renumbers the real values
+
+    def priority_tiers(self):
+        """The slot's non-empty values, split into groups to try in order.
+
+        Each tier is a list of (start, stop) index ranges. Ranges rather than value
+        lists so that a tier covering ten million values stays free to construct, and
+        so an index within a tier maps to a value in constant time.
+        """
+        return [[(0, self.nonempty_len)]]
 
 
 class _ListSlot(_Slot):
@@ -115,6 +132,28 @@ class _DigitsSlot(_Slot):
                 return str(i - offset).zfill(L)
             offset = bound
         raise IndexError(i)
+
+    def priority_tiers(self):
+        """Year-like values first, then everything else, both as index ranges.
+
+        Splitting a length at the year range leaves the remainder as two contiguous
+        pieces, so no tier ever needs to enumerate what it excludes.
+        """
+        if not self.min_len <= YEAR_DIGITS <= self.max_len:
+            return [[(0, self.nonempty_len)]]
+
+        lo, hi, offset, years, rest = YEAR_RANGE[0], YEAR_RANGE[1], 0, [], []
+        for k in range(len(self.bounds)):
+            length = self.min_len + k
+            start, stop = offset, self.bounds[k]
+            if length == YEAR_DIGITS:
+                years.append((start + lo, start + hi))
+                rest.append((start, start + lo))
+                rest.append((start + hi, stop))
+            else:
+                rest.append((start, stop))
+            offset = stop
+        return [years, [r for r in rest if r[1] > r[0]]]
 
 
 def _build_slot(spec):
@@ -172,6 +211,9 @@ class PassphraseGrammar:
         # dedupe but keep order; an empty separator list would silently drop candidates
         self.separators = list(dict.fromkeys(seps)) or [""]
         self.permute = bool(pp.get("permute_order"))
+        # Order by likelihood rather than by odometer. Off gives the raw product order,
+        # which is what a test wants when it needs to compare the two.
+        self.priority = bool(pp.get("priority", True))
         self.normalizations = pp.get("normalizations") or ["NFKD"]
 
     @classmethod
@@ -211,17 +253,6 @@ class PassphraseGrammar:
                 total += ways * self._outputs_for(len(self.slots) - empties)
         return total
 
-    def _uniform_outputs(self):
-        """Outputs per assignment, when every assignment yields the same number.
-
-        Only optional slots can vary it -- they change how many parts a candidate has,
-        and so how many orderings and separator placements it gets. Without them the
-        count is constant, and `skip` becomes a division instead of a walk.
-        """
-        if any(slot.optional for slot in self.slots):
-            return None
-        return self._outputs_for(len(self.slots))
-
     def assignment_count(self):
         """Number of slot-value combinations, before ordering and separators."""
         n = 1
@@ -229,15 +260,58 @@ class PassphraseGrammar:
             n *= len(slot)
         return n
 
+    # ---- priority order -------------------------------------------------
+
+    def _slot_tiers(self, slot):
+        """(index ranges, is-the-empty-tier) for each tier of `slot`, in trying order."""
+        if not self.priority:
+            return [([(0, len(slot))], False)]   # one flat tier; emptiness varies inside it
+        tiers = [(ranges, False) for ranges in slot.priority_tiers()]
+        if slot.optional:
+            # a slot the user is unsure about is tried present before absent
+            tiers.append(([(slot.nonempty_len, slot.nonempty_len + 1)], True))
+        return tiers
+
+    @staticmethod
+    def _tier_size(ranges):
+        return sum(stop - start for start, stop in ranges)
+
+    @staticmethod
+    def _tier_index(ranges, i):
+        """Map a position within a tier to an index into the slot."""
+        for start, stop in ranges:
+            width = stop - start
+            if i < width:
+                return start + i
+            i -= width
+        raise IndexError(i)
+
+    def _blocks(self):
+        """Every combination of per-slot tiers, cheapest first.
+
+        Cost is the sum of the tier numbers, so a candidate that is a second choice in
+        one slot comes before one that is a second choice in two. Within a block the
+        tiers are fixed, and therefore so is whether each slot is empty -- which is what
+        lets `generate` divide its way into a block instead of walking there.
+        """
+        all_tiers = [self._slot_tiers(s) for s in self.slots]
+        counts = [len(t) for t in all_tiers]
+        for cost in range(sum(c - 1 for c in counts) + 1):
+            for vector in itertools.product(*(range(c) for c in counts)):
+                if sum(vector) != cost:
+                    continue
+                ranges  = [all_tiers[i][t][0] for i, t in enumerate(vector)]
+                empties = [all_tiers[i][t][1] for i, t in enumerate(vector)]
+                yield ranges, empties, [self._tier_size(r) for r in ranges]
+
     # ---- generation -----------------------------------------------------
 
-    def _assignment(self, index):
+    def _assignment(self, ranges, sizes, index):
         """Decode a mixed-radix index into one value per slot. Last slot varies fastest."""
         values = [None] * len(self.slots)
         for i in range(len(self.slots) - 1, -1, -1):
-            slot = self.slots[i]
-            index, pos = divmod(index, len(slot))
-            values[i] = slot[pos]
+            index, pos = divmod(index, sizes[i])
+            values[i] = self.slots[i][self._tier_index(ranges[i], pos)]
         return values
 
     def _expand(self, values):
@@ -256,43 +330,59 @@ class PassphraseGrammar:
     def generate(self, skip=0, limit=None):
         """Yields candidates in a fixed order, resumable via `skip`.
 
-        Skipping walks assignments rather than candidates -- each assignment's output
-        count is known in advance -- so resuming is cheap even far into a long search.
+        Order is by priority when the grammar asks for it: the values a slot considers
+        likely come before the rest, and a candidate settling for a second choice in one
+        slot comes before one settling in two. This changes only the order -- the set of
+        candidates, and so `count()`, is the same either way.
         """
         if skip < 0:
             raise ValueError("skip must be >= 0")
         produced = 0
-        index = 0
-        total_assignments = self.assignment_count()
+        flexible_emptiness = not self.priority and any(s.optional for s in self.slots)
 
-        per_assignment = self._uniform_outputs()
-        if skip and per_assignment:
-            # Jump straight to the right assignment rather than counting up to it; this
-            # is what keeps resuming a billion candidates in cheap.
-            index, skip = divmod(skip, per_assignment)
-            index = min(index, total_assignments)
+        for ranges, empties, sizes in self._blocks():
+            assignments = 1
+            for size in sizes:
+                assignments *= size
+            if not assignments:
+                continue
 
-        while index < total_assignments:
-            values = self._assignment(index)
-            index += 1
-            if skip:
-                # An assignment whose output we would discard entirely can be counted
-                # off without building any of its strings.
-                num_parts = sum(1 for v in values if v)
-                if not num_parts:
+            # Outputs per assignment, where the block fixes it. Only a flat tier holding
+            # both real values and the empty one leaves it varying.
+            per_assignment = None
+            if not flexible_emptiness:
+                per_assignment = self._outputs_for(len(self.slots) - sum(empties))
+                if not per_assignment:
+                    continue          # every slot in this block is empty
+                block_total = assignments * per_assignment
+                if skip >= block_total:
+                    skip -= block_total
                     continue
-                produced_here = self._outputs_for(num_parts)
-                if produced_here <= skip:
-                    skip -= produced_here
-                    continue
-            for candidate in self._expand(values):
-                if skip:
-                    skip -= 1
-                    continue
-                yield candidate
-                produced += 1
-                if limit is not None and produced >= limit:
-                    return
+
+            index = 0
+            if per_assignment and skip:
+                index, skip = divmod(skip, per_assignment)
+
+            while index < assignments:
+                values = self._assignment(ranges, sizes, index)
+                index += 1
+                if skip and not per_assignment:
+                    num_parts = sum(1 for v in values if v)
+                    if not num_parts:
+                        continue
+                    here = self._outputs_for(num_parts)
+                    if here <= skip:
+                        skip -= here
+                        continue
+                for candidate in self._expand(values):
+                    if skip:
+                        skip -= 1
+                        continue
+                    yield candidate
+                    produced += 1
+                    if limit is not None and produced >= limit:
+                        return
+
 
     def __iter__(self):
         return self.generate()

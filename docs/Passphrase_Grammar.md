@@ -60,7 +60,7 @@ BTCRecover already has.
 | type | takes | notes |
 |---|---|---|
 | `words` | `candidates`, `cases` | `cases` from `asis`, `lower`, `title`, `upper`; forms that collide are counted once |
-| `digits` | `length: [min, max]` **or** `candidates` | a range covers every string of those lengths, leading zeros kept (`0301` ≠ `301`) |
+| `digits` | `length: [min, max]` **or** `candidates` | a range covers every string of those lengths, leading zeros kept (`0301` ≠ `301`); a range including length 4 tries years first |
 | `symbols` | `candidates` | |
 | `fixed` | `candidates` | for a part that is remembered exactly |
 
@@ -83,6 +83,40 @@ not once per separator.
 This is why the candidate count is not the plain product of the slot sizes, and why
 `count()` sums over each subset of optional slots that could go empty.
 
+## Priority order
+
+Candidates are emitted in likelihood order by default. Right now that model is one rule:
+**a four-digit run is tried as a year (1900–2099) before it is tried as anything else.**
+Birth years, wedding years, the year someone bought their first coin — these are what
+four digits in a passphrase usually are.
+
+Measured rank of the correct passphrase, same grammar either way:
+
+| what the digits were | plain order | priority order | |
+|---|---|---|---|
+| `비밀번호2024` (2 words × 4 digits) | 2,025 | 125 | 16x sooner |
+| `우리집1998` (second word) | 11,999 | 299 | 40x sooner |
+| `minji1988` | 1,989 | 89 | 22x sooner |
+| `minji0301` (a date, not a year) | 302 | 502 | 0.6x — *slower* |
+
+The last row is the honest cost: pushing 200 years to the front pushes everything else
+back by 200. That penalty is bounded and small; the gain is up to a factor of thousands.
+
+When slots disagree, cost is the **sum of tier numbers** — a candidate settling for a
+second choice in one slot is tried before one settling for second choices in two.
+
+Set `"priority": false` in the grammar to get the raw product order instead. Either way
+the *set* of candidates is identical, so `count()` and the ETA are unchanged: ordering
+only decides how early within that total a search is likely to stop.
+
+### Replacing the model
+
+`YEAR_RANGE` in `btcrecover/passphrase_grammar.py` is deliberately the whole of it — a
+small prior that can be stated and defended, sitting where statistics from real cases
+belong. Whatever replaces it must stay expressible as **index ranges** over a slot's
+values. That is what keeps a tier free to construct when it covers ten million values,
+and what keeps `--skip` a division rather than a walk.
+
 ## Command line
 
 ```bash
@@ -92,8 +126,9 @@ python -m btcrecover.passphrase_grammar config.json --skip 4000000   # resume
 ```
 
 Candidates come out in a fixed order, so `--skip` resumes exactly where a previous run
-stopped. Where no slot is optional the skip is a division rather than a walk, so resuming
-four million candidates in is instant.
+stopped. In priority order the skip is always a division rather than a walk — a tier fixes
+whether each slot is empty, so every candidate within one block costs the same to count
+past. Skipping 200 million candidates into a 222-million-candidate space is immediate.
 
 Slots are indexed rather than materialized: a slot covering every digit string up to
 eight characters is 111,111,110 candidates and costs nothing to construct.

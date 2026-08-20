@@ -17,6 +17,32 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
+## 2026-08-20 — Priority ordering for grammar candidates
+
+**Changed:** `btcrecover/passphrase_grammar.py`, `webapp/diagnostic.html`
+
+Candidates are now emitted in likelihood order rather than odometer order. Each slot splits
+its values into tiers, a candidate's cost is the sum of its slots' tier numbers, and blocks
+are emitted cheapest first. The model itself is currently a single rule — a four-digit run
+is tried as a year (1900–2099) before anything else — kept small and contiguous so it can be
+replaced by real case statistics without changing the machinery.
+
+Measured rank of the correct passphrase in a 20,000-candidate grammar: 2,025 → 125 for
+`비밀번호2024`, and 11,999 → 299 when the answer used the second of two words. A four-digit
+run that is *not* a year loses about 200 places, which is the bounded cost of the same
+choice.
+
+Ordering changes only the order: the candidate set, and so `count()` and the quoted ETA, are
+identical either way, and the tests assert it. `"priority": false` restores the raw product
+order.
+
+This also made resumption strictly better. A tier fixes whether each slot is empty, so every
+candidate in a block costs the same to count past, and `--skip` is a division even when the
+grammar has optional slots — where it previously had to walk. Skipping 200 million candidates
+into a 222-million-candidate space is now immediate.
+
+---
+
 ## 2026-08-20 — Passphrase grammars, and normalization on the passphrase-search path
 
 **Changed:** `btcrecover/btcrpass.py`
