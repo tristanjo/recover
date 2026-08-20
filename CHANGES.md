@@ -12,6 +12,45 @@ and is entitled to the complete corresponding source code.
 GPLv2 section 2(a) requires modified files to carry a notice of the change and its date. Each file
 changed here carries such a notice in its header, and the changes are summarized below.
 
+The first commit in this repository is an unmodified snapshot of upstream, so everything this fork
+changed is exactly `git diff <that commit> HEAD` — no summary here can drift away from the code.
+
+---
+
+## 2026-08-20 — Passphrase grammars, and normalization on the passphrase-search path
+
+**Changed:** `btcrecover/btcrpass.py`
+**Added:** `btcrecover/passphrase_grammar.py`, `btcrecover/test/test_passphrase_grammar.py`,
+`docs/Passphrase_Grammar.md`, `webapp/diagnostic.html`
+
+`btcrpass.WalletBIP39` searches the passphrase itself with the mnemonic held fixed, which
+is the path that matters when the mnemonic is already known. It normalized every candidate
+to NFKD, so it had the same blind spot as the seed-search path fixed above, and the fix had
+to be made twice. Both the CPU and OpenCL paths now try each requested form, and
+`--passphrase-normalizations` is available on `btcrecover.py` as well as `seedrecover.py`.
+
+`btcrecover.passphrase_grammar` expands a small JSON description of a passphrase -- some
+remembered words, a digit range, an optional symbol -- into candidates on demand. Slots are
+indexed rather than materialized, so a slot covering every digit string up to eight
+characters is 111,111,110 candidates that cost nothing to construct, and the output is a
+stream that pipes into `--passwordlist -`. The order is fixed and `--skip` resumes into it,
+by division rather than by walking where no slot is optional.
+
+`webapp/diagnostic.html` is a self-contained page that builds such a grammar from what a
+user remembers and reports how large the search is, how long it would take, and which
+remembered detail would shrink it most. It makes no network request; the grammar is
+assembled in the browser and downloaded from a Blob.
+
+Both implementations count candidates with the same formula, and the tests pin them to each
+other. An optional slot that goes empty drops the separator that would have followed it, so
+the count is not the plain product of the slot sizes.
+
+Worth knowing when choosing a path: with one known mnemonic, `seedrecover.py
+--passphrase-list` has a single unit of work and so uses one core no matter how many
+workers it reports, and holds every passphrase in memory. Measured over 20,000 candidates,
+`btcrecover.py --wallet-type bip39 --passwordlist -` finished the same search in 2.3s at
+918% CPU against 17.2s at 100%.
+
 ---
 
 ## 2026-08-20 — Unicode normalization for non-ASCII BIP39 passphrases
@@ -39,10 +78,6 @@ both the mnemonic and the passphrase were exactly correct.
   salts the passphrase verbatim and would otherwise misreport which normalization matched.
 
 Electrum 2.x is unaffected: it defines and consistently applies its own normalization.
-
-The patch is also kept standalone at
-[`patches/0001-cjk-passphrase-normalization.patch`](patches/0001-cjk-passphrase-normalization.patch)
-so it can be re-applied against a fresh upstream checkout.
 
 ### Verification
 

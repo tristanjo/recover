@@ -2,7 +2,13 @@
 # Copyright (C) 2014-2017 Christopher Gurnee
 #               2020 Jefferson Nunn and Gaith
 #               2019-2021 Stephen Rothery
-#               
+#               2026      tristanjo
+#
+# Changed from the upstream 3rdIteration/btcrecover release:
+#   2026-08-20  WalletBIP39 tries each requested Unicode normalization form of the
+#               candidate passphrase rather than NFKD alone, via
+#               --passphrase-normalizations; see docs/CJK_Passphrase_Normalization.md
+#
 # This file is part of btcrecover.
 #
 # btcrecover is free software: you can redistribute it and/or
@@ -4283,38 +4289,61 @@ class WalletBIP39(object):
         return self._return_verified_password_or_false_opencl(mnemonic_ids_list) if (self.opencl and not isinstance(self.opencl_algo,int)) \
           else self._return_verified_password_or_false_cpu(mnemonic_ids_list)
 
+    def _salt_prefix(self):
+        return b"electrum" if type(self.btcrseed_wallet) is btcrecover.btcrseed.WalletElectrum2 else b"mnemonic"
+
+    def _password_variants(self, password):
+        """Yields (UTF-8 bytes, form name) for each distinct normalization of `password`.
+
+        BIP39 mandates NFKD, but wallets which never normalized what the user typed
+        hashed some other form of it, and for non-ASCII passphrases those are different
+        byte strings and so different wallets. ASCII collapses to a single variant, so
+        enabling the extra forms costs an ASCII search nothing. See
+        docs/CJK_Passphrase_Normalization.md."""
+        seen = set()
+        for form in getattr(self, "_passphrase_normalizations", ("NFKD",)):
+            pw_bytes = normalize(form, password).encode("utf_8", "ignore")
+            if pw_bytes not in seen:
+                seen.add(pw_bytes)
+                yield pw_bytes, form
+
+    def _report_matched_form(self, form):
+        # NFC and NFD look identical on screen, so the form is the only way for the user
+        # to reproduce the recovered passphrase in another wallet.
+        if len(getattr(self, "_passphrase_normalizations", ("NFKD",))) > 1:
+            print("\nMatched with Unicode normalization form:", form)
+
     # This is the time-consuming function executed by worker thread(s). It returns a tuple: if a password
     # is correct return it, else return False for item 0; return a count of passwords checked for item 1
     def _return_verified_password_or_false_cpu(self, passwords):
-        # Convert Unicode strings (lazily) to normalized UTF-8 bytestrings
-        passwords = map(lambda p: normalize("NFKD", p).encode("utf_8", "ignore"), passwords)
+        salt_prefix = self._salt_prefix()
+        count = 0
 
         for count, password in enumerate(passwords, 1):
-            if type(self.btcrseed_wallet) is btcrecover.btcrseed.WalletElectrum2:
-                derivation_salt = b"electrum" + password
-            else:
-                derivation_salt = b"mnemonic" + password
+            for pw_bytes, form in self._password_variants(password):
+                seed_bytes = pbkdf2_hmac("sha512", self._mnemonic.encode(), salt_prefix + pw_bytes, 2048)
 
-            seed_bytes = pbkdf2_hmac("sha512", self._mnemonic.encode(), derivation_salt, 2048)
+                if type(self.btcrseed_wallet) is not btcrecover.btcrseed.WalletXLM:
+                    seed_bytes = hmac.new(b"Bitcoin seed", seed_bytes, hashlib.sha512).digest()
 
-            if type(self.btcrseed_wallet) is not btcrecover.btcrseed.WalletXLM:
-                seed_bytes = hmac.new(b"Bitcoin seed", seed_bytes, hashlib.sha512).digest()
-
-            if self.btcrseed_wallet._verify_seed(seed_bytes):
-                return password.decode("utf_8", "replace"), count
+                if self.btcrseed_wallet._verify_seed(seed_bytes):
+                    self._report_matched_form(form)
+                    return pw_bytes.decode("utf_8", "replace"), count
 
         return False, count
 
     def _return_verified_password_or_false_opencl(self, arg_passwords):
-        # Convert Unicode strings (lazily) to normalized UTF-8 bytestrings
-        passwords = map(lambda p: normalize("NFKD", p).encode("utf_8", "ignore"), arg_passwords)
+        arg_passwords = list(arg_passwords)
+        salt_prefix = self._salt_prefix()
 
+        # One entry per salt, remembering which password (1-based, for the caller's count)
+        # and which normalization form it came from.
+        variants = []
         salt_list = []
-        for password in passwords:
-            if type(self.btcrseed_wallet) is btcrecover.btcrseed.WalletElectrum2:
-                salt_list.append(b"electrum" + password)
-            else:
-                salt_list.append(b"mnemonic" + password)
+        for password_num, password in enumerate(arg_passwords, 1):
+            for pw_bytes, form in self._password_variants(password):
+                variants.append((password_num, pw_bytes, form))
+                salt_list.append(salt_prefix + pw_bytes)
 
         clResult = self.opencl_algo.cl_pbkdf2_saltlist(self.opencl_context_pbkdf2_sha512, self._mnemonic.encode(), salt_list, 2048, 64)
 
@@ -4323,21 +4352,17 @@ class WalletBIP39(object):
         #for salt in salt_list:
         #    clResult.append(pbkdf2_hmac("sha512", self._mnemonic.encode(), salt, 2048))
 
-        # This list is consumed, so recreated it and zip
-        passwords = map(lambda p: normalize("NFKD", p).encode("utf_8", "ignore"), arg_passwords)
-
-        results = zip(passwords, clResult)
-
-        for count, (password, result) in enumerate(results, 1):
+        for (password_num, pw_bytes, form), result in zip(variants, clResult):
             if type(self.btcrseed_wallet) is not btcrecover.btcrseed.WalletXLM:
                 seed_bytes = hmac.new(b"Bitcoin seed", result, hashlib.sha512).digest()
             else:
                 seed_bytes = result
 
             if self.btcrseed_wallet._verify_seed(seed_bytes):
-                return password.decode("utf_8", "replace"), count
+                self._report_matched_form(form)
+                return pw_bytes.decode("utf_8", "replace"), password_num
 
-        return False, count
+        return False, len(arg_passwords)
 
 ############### SLIP-39 ###############
 
@@ -6279,6 +6304,11 @@ def init_parser_common():
         bip39_group.add_argument("--disable-bip44", action="store_true", help="Disable checking of BIP44 legacy (P2PKH) addresses")
         bip39_group.add_argument("--disable-bip84", action="store_true", help="Disable checking of BIP84 native SegWit (P2WPKH) addresses")
         bip39_group.add_argument("--mnemonic",  metavar="MNEMONIC",       help="Your best guess of the mnemonic (if not entered, you will be prompted)")
+        bip39_group.add_argument("--passphrase-normalizations", metavar="FORMS",
+                                 help="Unicode normalization form(s) applied to each candidate passphrase, comma separated "
+                                      "(NFKD,NFC,NFD,NFKC) or 'all' (default: NFKD, as BIP39 specifies). Use 'all' when the "
+                                      "passphrase contains non-ASCII characters (Hangul, Kana, accents...) and the wallet may "
+                                      "not have normalized it correctly; ASCII passphrases are unaffected")
         bip39_group.add_argument("--skip-mnemonic-checksum", action="store_true",
                                  help="skip validating the checksum of the provided mnemonic")
         bip39_group.add_argument("--mnemonic-prompt", action="store_true", help="prompt for the mnemonic guess via the terminal (default: via the GUI)")
@@ -7037,6 +7067,18 @@ def parse_arguments(effective_argv, wallet = None, base_iterator = None,
                                     disable_p2tr = args.disable_p2tr,
                                     disable_bip44 = args.disable_bip44,
                                     disable_bip84 = args.disable_bip84)
+
+    if hasattr(loaded_wallet, "_password_variants"):
+        from . import btcrseed
+        try:
+            forms = btcrseed.parse_passphrase_normalizations(args.passphrase_normalizations)
+        except ValueError as e:
+            error_exit(str(e))
+        loaded_wallet._passphrase_normalizations = forms
+        if len(forms) > 1:
+            print("Passphrase normalization forms to try:", ", ".join(forms))
+    elif args.passphrase_normalizations:
+        error_exit("--passphrase-normalizations only applies to BIP39/Electrum2 passphrase recovery")
 
 
     if args.yoroi_master_password:

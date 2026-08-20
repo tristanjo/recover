@@ -59,6 +59,14 @@ This matters when moving funds: the recovered passphrase has to be entered into 
 the same form. If the label says `[NFC]` and the destination wallet normalizes to NFKD, typing the
 "same" passphrase will produce a different wallet.
 
+## Both search paths support it
+
+`--passphrase-normalizations` exists on `seedrecover.py`, which searches mnemonics and
+applies the passphrase as a multiplier, and on `btcrecover.py --wallet-type bip39`, which
+searches the passphrase itself. Prefer the latter whenever the mnemonic is already known:
+it is the only one that uses more than one core. See
+[Passphrase Grammars](Passphrase_Grammar.md).
+
 ## Scope
 
 Applies to BIP39 wallets (and the many coins deriving from `WalletBIP39`). Electrum 2.x is
