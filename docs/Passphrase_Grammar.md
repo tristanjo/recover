@@ -210,6 +210,48 @@ crash it would cause takes a running recovery with it.
 The same rule governs testing: `btcrecover/test/test_recovery_gui.py` shares a single
 window across every test rather than opening one per test.
 
+## Building the program
+
+```bash
+pip install pyinstaller
+pyinstaller --noconfirm --clean recovery_gui.spec
+dist/passphrase-recovery/passphrase-recovery --self-test
+```
+
+A **folder**, not a single file. A one-file build unpacks itself to a temporary directory
+at every launch, which is both the shape antivirus heuristics dislike most and the shape
+that hides what shipped. A folder can be looked through, and diffed against a build made
+from the same source. UPX packing is off for the same reason.
+
+`--self-test` runs the recovery of a known passphrase and exits non-zero if it fails. A
+windowed Windows build has no stdout, so the exit code carries the verdict and
+`--report FILE` carries the detail — which is how CI checks *the binary it is about to
+ship*, rather than a console-mode stand-in.
+
+### Two things the spec exists to fix
+
+`wallycore` reaches its native library through `importlib.import_module("_wallycore")`,
+which PyInstaller's static analysis cannot see. Miss it and the build still works, still
+passes its self-test, and runs on the pure-Python secp256k1 — roughly two orders of
+magnitude slower, with only a warning to say so. The build job greps for that warning.
+
+`bitcoinlib` reads `config/VERSION` and its `data/` directory at import time and refuses
+to load without them. Both are listed as `datas`, along with the BIP39 wordlists that
+btcrseed locates relative to its own `__file__`.
+
+### The Windows build
+
+`.github/workflows/build-windows.yml` builds on a tag, on a public runner, from a commit.
+It runs the test suite, self-tests the built program, publishes the SHA256 into the run
+log where it cannot be edited afterwards, and records a provenance attestation:
+
+```bash
+gh attestation verify passphrase-recovery-*.zip --repo <owner>/<repo>
+```
+
+Python is pinned to 3.12 there: coincurve publishes wheels through 3.13, and on 3.14 the
+build would quietly fall back to the slow backend.
+
 ## Reading a match
 
 ```

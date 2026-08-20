@@ -17,6 +17,37 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
+## 2026-08-20 — Packaging the recovery program
+
+**Changed:** `recovery_gui.py`, `.gitignore`
+**Added:** `recovery_gui.spec`, `.github/workflows/build-windows.yml`
+
+A PyInstaller folder build, and a Windows build job that tests what it ships.
+
+`recovery_gui.py --self-test [--report FILE]` recovers a known passphrase and exits
+non-zero if it cannot. A windowed Windows build has no stdout, so the exit code carries the
+verdict and the report file carries the detail — which means CI can check the same binary it
+publishes, not a console-mode stand-in. It is equally useful to whoever downloaded the
+program and wants to watch it work before showing it a seed phrase.
+
+Building locally first turned up two failures that would have shipped:
+
+* `wallycore` reaches its native library through `importlib.import_module("_wallycore")`,
+  invisible to static analysis. Without it the build still runs and still passes its
+  self-test, on the pure-Python secp256k1 — about two orders of magnitude slower, announced
+  only by a warning. The build job now fails if that warning appears.
+* `bitcoinlib` reads `config/VERSION` and `data/` at import time and will not load without
+  them.
+
+The build is a folder rather than one file, and UPX is off. A one-file build unpacks to a
+temporary directory at each launch, which is the shape antivirus heuristics like least and
+the shape that hides what shipped; a folder can be read and diffed.
+
+Verified on the frozen binary: workers peak at one parent plus fourteen, exactly the
+expected count, so `prepare_frozen_start()` does hold.
+
+---
+
 ## 2026-08-20 — The offline recovery window
 
 **Changed:** `btcrecover/embed.py`

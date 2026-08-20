@@ -455,8 +455,57 @@ class RecoveryApp(tk.Tk):
         ttk.Button(nav, text="닫기", command=self.destroy).pack(side="right")
 
 
+def self_test_from_terminal(report_path=None):
+    """Run the self-test with no window, and say plainly whether it passed.
+
+    A built executable can be checked this way without clicking anything -- by whoever
+    built it, by a CI job, and by whoever downloaded it and wants to see it work before
+    it is shown a seed phrase.
+
+    A windowed build on Windows has no stdout at all, so the exit code carries the
+    verdict and `report_path` is how a build job reads the detail. That way the binary
+    that gets tested is the same one that gets shipped.
+    """
+    lines = ["자가검증: 공개 BIP39 테스트 벡터로 알려진 패스프레이즈를 찾습니다."]
+    try:
+        plan = embed.SearchPlan(SELF_TEST["config"])
+        result = embed.run(plan, SELF_TEST["mnemonic"])
+    except Exception as e:
+        result, plan = embed.SearchResult(error=str(e)), None
+    if result.found and result.passphrase == SELF_TEST["passphrase"]:
+        code = 0
+        lines.append("통과 — '{}' 을 {:,}개 중 {}번째에서 {:.2f}초 만에 찾았습니다.".format(
+            result.passphrase, plan.candidate_count(), result.tried + 1, result.elapsed))
+    else:
+        code = 1
+        lines.append("실패 — " + (result.error or "정답을 찾지 못했습니다"))
+    if result.log:
+        lines.append("")
+        lines.append(result.log.strip())
+
+    for line in lines[:2]:
+        print(line)
+    if report_path:
+        try:
+            with open(report_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+        except OSError as e:
+            print("보고 파일을 쓸 수 없습니다:", e)
+            return 1
+    return code
+
+
 def main():
     embed.prepare_frozen_start()   # must come first; see btcrecover/embed.py
+    argv = sys.argv[1:]
+    if "--self-test" in argv:
+        report = None
+        if "--report" in argv:
+            index = argv.index("--report") + 1
+            if index >= len(argv):
+                sys.exit("--report needs a file path")
+            report = argv[index]
+        sys.exit(self_test_from_terminal(report))
     RecoveryApp().mainloop()
 
 

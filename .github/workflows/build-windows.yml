@@ -1,0 +1,129 @@
+# Builds the Windows recovery program, proves it works, and records where it came from.
+#
+# The point of building here rather than on a laptop is that anyone can check the result:
+# the run is public, the inputs are a commit, and the attestation ties the binary back to
+# both. A customer is asked to run this program against their seed phrase -- "trust me"
+# is not an answer, and a hash they can compare is.
+#
+# Copyright (C) 2026 tristanjo. Part of btcrecover, GNU GPL v2 or later.
+
+name: Build Windows recovery program
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish_attestation:
+        description: "Record build provenance (tags do this automatically)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write        # for the provenance attestation
+  attestations: write
+
+env:
+  # coincurve publishes wheels through 3.13; 3.14 has none and would silently fall back
+  # to the pure-Python secp256k1, which is correct and about two orders of magnitude
+  # slower. Pinning the interpreter is also the first requirement for a reproducible build.
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller==6.22.2
+
+      - name: Show which crypto backend was installed
+        # A silent fall back to the pure-Python backend is the failure most likely to go
+        # unnoticed, so make it loud before anything is built.
+        run: |
+          python -c "import coincurve; print('coincurve', coincurve.__version__)"
+
+      - name: Run the test suite
+        # Each module in its own process: test_seeds and test_passwords share global state
+        # in btcrpass and cannot be collected together, which is how run-all-tests.py does
+        # it too. A broken build must not reach the packaging step.
+        run: |
+          python -m unittest btcrecover.test.test_passphrase_grammar
+          python -m unittest btcrecover.test.test_cjk_passphrase
+          python -m unittest btcrecover.test.test_embed
+          python -m unittest btcrecover.test.test_recovery_gui
+          python -m unittest btcrecover.test.test_seeds
+          python -m unittest btcrecover.test.test_passwords
+
+      - name: Anchor the build clock to the commit
+        # Two builds of one commit should have a chance of matching byte for byte, which
+        # they cannot if timestamps come from whenever the runner happened to start.
+        run: |
+          $epoch = git show -s --format=%ct HEAD
+          echo "SOURCE_DATE_EPOCH=$epoch" >> $env:GITHUB_ENV
+
+      - name: Build
+        run: pyinstaller --noconfirm --clean recovery_gui.spec
+
+      - name: Self-test the built program
+        # The binary tested here is the one that ships. A windowed Windows build has no
+        # stdout, so the exit code carries the verdict and --report carries the detail.
+        run: |
+          dist\passphrase-recovery\passphrase-recovery.exe --self-test --report self-test.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content self-test.txt; exit 1 }
+          Get-Content self-test.txt
+
+      - name: Check it did not silently lose its crypto backend
+        # The self-test passes either way; it is the speed that collapses. Catch it by
+        # looking for the warning the fallback prints.
+        run: |
+          if (Select-String -Path self-test.txt -Pattern "pure-Python" -Quiet) {
+            Write-Error "built program fell back to the pure-Python secp256k1 backend"
+            exit 1
+          }
+
+      - name: Package
+        run: |
+          $version = if ($env:GITHUB_REF -like "refs/tags/*") { $env:GITHUB_REF -replace "refs/tags/","" } else { $env:GITHUB_SHA.Substring(0,7) }
+          echo "VERSION=$version" >> $env:GITHUB_ENV
+          Copy-Item self-test.txt dist\passphrase-recovery\
+          $name = "passphrase-recovery-$version-windows"
+          Compress-Archive -Path dist\passphrase-recovery -DestinationPath "$name.zip"
+          echo "PACKAGE=$name" >> $env:GITHUB_ENV
+
+      - name: Publish the hash
+        # This is the number a customer compares against what they downloaded. It belongs
+        # in the run log, where it cannot be edited after the fact.
+        run: |
+          $hash = (Get-FileHash "$env:PACKAGE.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $env:PACKAGE.zip" | Tee-Object -FilePath "$env:PACKAGE.zip.sha256"
+          echo "### SHA256" >> $env:GITHUB_STEP_SUMMARY
+          echo '```' >> $env:GITHUB_STEP_SUMMARY
+          echo "$hash  $env:PACKAGE.zip" >> $env:GITHUB_STEP_SUMMARY
+          echo '```' >> $env:GITHUB_STEP_SUMMARY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE }}
+          path: |
+            ${{ env.PACKAGE }}.zip
+            ${{ env.PACKAGE }}.zip.sha256
+          if-no-files-found: error
+
+      - name: Record build provenance
+        # Lets anyone verify the binary came from this repository at this commit:
+        #   gh attestation verify passphrase-recovery-*.zip --repo <owner>/<repo>
+        if: startsWith(github.ref, 'refs/tags/') || inputs.publish_attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ env.PACKAGE }}.zip
