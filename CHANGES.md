@@ -17,7 +17,28 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
-## 2026-08-20 — Packaging the recovery program
+## 2026-08-20 — The Windows build works
+
+Verified on `windows-latest`, from a commit, on a public runner: dependencies, the four
+suites covering this fork, a PyInstaller build in 22 seconds, and the built program
+recovering the published BIP39 test vector in 0.86 seconds on the coincurve backend.
+19.7 MB packaged, three minutes end to end.
+
+Five failures got there, and they are worth keeping in view because only the third was
+a mistake in the program rather than in how it was being checked:
+
+1. `coincurve.__version__`, which coincurve does not define — a check that could only fail.
+2. Upstream's own test suites, on a platform upstream does not test. Still running after
+   twenty-two minutes, leaking file handles that Windows will not let go of.
+3. **A real bug.** A Windows console encodes as cp1252, where Hangul does not exist, so
+   the program died printing its own first line. The same crash would have hit a recovered
+   Korean seed phrase at the moment of success.
+4. and 5. A shell does not wait for a GUI-subsystem executable. Both runs checked the exit
+   code and the report before the program had produced either. Two guesses at the cause
+   were wrong; making the step report what it saw found it on the first try.
+
+The program had been working on Windows since (3) was fixed. The last two failures were
+the harness misreading it.
 
 **Changed:** `recovery_gui.py`, `.gitignore`
 **Added:** `recovery_gui.spec`, `.github/workflows/build-windows.yml`
