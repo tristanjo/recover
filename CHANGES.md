@@ -17,7 +17,26 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
-## 2026-08-20 — Ask about the passphrase instead of asking for a grammar
+## 2026-08-20 — Close the LevelDB files a Metamask wallet opens
+
+**Changed:** `btcrecover/btcrpass.py`, `btcrecover/test/test_passwords.py`
+
+Found while working out why the Windows build job sat on the test suite for twenty-two
+minutes: the log was thousands of lines of `ResourceWarning: unclosed file`, walking through
+`.ldb`, `.log` and `MANIFEST` files inside the Metamask test wallets.
+
+`WalletMetamask.load_from_filename` built a `ccl_leveldb.RawLevelDb` and never closed it,
+although the class supports both `close()` and the context manager protocol. The files still
+closed eventually, when a finalizer got to them -- which is why this never showed up on
+Linux, where an open file can be deleted anyway. On Windows it cannot, so the temporary
+directory the test wallets live in stays undeletable until the collector happens to run.
+
+Measured over five loads: twenty warnings before, none after. The file descriptor count does
+not change, because refcounting was collecting them regardless; what changes is that closing
+is now deterministic.
+
+This is upstream's code and upstream's bug, and worth offering back — it is the reason their
+own CI says `os: [ubuntu-24.04] # Test Ubuntu Only`.
 
 **Changed:** `webapp/diagnostic.html`
 

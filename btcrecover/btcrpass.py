@@ -8,6 +8,7 @@
 #   2026-08-20  WalletBIP39 tries each requested Unicode normalization form of the
 #               candidate passphrase rather than NFKD alone, via
 #               --passphrase-normalizations; see docs/CJK_Passphrase_Normalization.md
+#   2026-08-20  WalletMetamask.load_from_filename closes the LevelDB files it opens
 #
 # This file is part of btcrecover.
 #
@@ -3454,38 +3455,42 @@ class WalletMetamask(object):
     def load_from_filename(cls, wallet_filename):
         tryLoadJSONFile = False
         try:
-            leveldb_records = ccl_leveldb.RawLevelDb(wallet_filename)
-            walletdata_list = []
-            for record in leveldb_records.iterate_records_raw():
-                # print(record)
-                # For LDB files and Ronin wallet log files
-                if b"vault" in record.key or b"encryptedVault" in record.key:
-                    data = record.value.decode("utf-8", "ignore").replace("\\", "")
-                    if "\"salt\"" in data:
-                        if data in walletdata_list:
-                            continue
+            # A RawLevelDb opens every .ldb, .log and MANIFEST in the wallet directory.
+            # Left unclosed they are collected whenever the interpreter gets round to it,
+            # which on Windows means the temporary directory they live in cannot be removed;
+            # the test suite spends longer retrying deletions than it does testing.
+            with ccl_leveldb.RawLevelDb(wallet_filename) as leveldb_records:
+                walletdata_list = []
+                for record in leveldb_records.iterate_records_raw():
+                    # print(record)
+                    # For LDB files and Ronin wallet log files
+                    if b"vault" in record.key or b"encryptedVault" in record.key:
+                        data = record.value.decode("utf-8", "ignore").replace("\\", "")
+                        if "\"salt\"" in data:
+                            if data in walletdata_list:
+                                continue
 
-                        wallet_data = data[1:-1]
+                            wallet_data = data[1:-1]
 
-                if b"data" in record.key:
-                    data = record.value.decode("utf-8", "ignore").replace("\\", "")
-                    if "\"salt\"" in data:
-                        walletStartText = "\"vault\""
+                    if b"data" in record.key:
+                        data = record.value.decode("utf-8", "ignore").replace("\\", "")
+                        if "\"salt\"" in data:
+                            walletStartText = "\"vault\""
 
-                        wallet_data_start = data.lower().find(walletStartText)
+                            wallet_data_start = data.lower().find(walletStartText)
 
-                        wallet_data_trimmed = data[wallet_data_start:]
+                            wallet_data_trimmed = data[wallet_data_start:]
 
-                        wallet_data_start = wallet_data_trimmed.find("\"data\"")
-                        wallet_data_trimmed = wallet_data_trimmed[wallet_data_start - 1:]
+                            wallet_data_start = wallet_data_trimmed.find("\"data\"")
+                            wallet_data_trimmed = wallet_data_trimmed[wallet_data_start - 1:]
 
-                        wallet_data_end = wallet_data_trimmed.find("}\"}")
-                        wallet_data = wallet_data_trimmed[:wallet_data_end + 1]
+                            wallet_data_end = wallet_data_trimmed.find("}\"}")
+                            wallet_data = wallet_data_trimmed[:wallet_data_end + 1]
 
-                        if wallet_data in walletdata_list:
-                            continue
+                            if wallet_data in walletdata_list:
+                                continue
 
-                        walletdata_list.append(wallet_data)
+                            walletdata_list.append(wallet_data)
 
         except ValueError:
             tryLoadJSONFile = True

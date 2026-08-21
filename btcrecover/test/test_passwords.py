@@ -1554,6 +1554,25 @@ class Test07WalletDecryption(unittest.TestCase):
     def test_metamask_v11_12_1_json_chrome_cpu(self):
         self.wallet_tester("metamask_vault_v11_12_1.txt")
 
+    @skipUnless(can_load_leveldb, "Unable to load LevelDB module, requires Python 3.8+")
+    def test_metamask_leveldb_files_are_closed(self):
+        """A LevelDB wallet is a directory of .ldb, .log and MANIFEST files, all opened.
+
+        Left to a finalizer they close whenever the interpreter gets round to it, which on
+        Windows leaves the directory undeletable and makes the suite spend longer retrying
+        removals than running tests. Closing has to be deterministic, so assert nothing is
+        left for the garbage collector to complain about.
+        """
+        import gc, warnings
+        wallet_dir = os.path.join(WALLET_DIR, "metamask", "nkbihfbeogaeaoehlefnkodbefgpgknn-v11_12_1")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ResourceWarning)
+            for _ in range(3):
+                btcrpass.WalletMetamask.load_from_filename(wallet_dir)
+            gc.collect()
+        unclosed = [str(w.message) for w in caught if issubclass(w.category, ResourceWarning)]
+        self.assertEqual(unclosed, [], "wallet files were left for the garbage collector")
+
     def test_metamask_JSON_firefox_cpu(self):
         self.wallet_tester("metamask.9.8.4_firefox_vault")
 
