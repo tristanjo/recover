@@ -28,8 +28,10 @@ import os, re, sys, unittest
 if __name__ == '__main__':
     sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                    "..", "..", "webapp", "diagnostic.html")
+WEBAPP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "webapp")
+PAGE = os.path.join(WEBAPP, "diagnostic.html")
+STYLES = os.path.join(WEBAPP, "diagnostic.css")
+HEADERS = os.path.join(WEBAPP, "_headers")
 
 # Measured on the reference machine (Apple Silicon, wallycore), one thread, 20,000
 # candidates per point, one derivation path: address count -> microseconds per candidate.
@@ -46,6 +48,11 @@ TOLERANCE = 0.05
 
 def page_source():
     with open(PAGE, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def read(path):
+    with open(path, "r", encoding="utf-8") as f:
         return f.read()
 
 
@@ -409,6 +416,125 @@ class AfterRecovery(unittest.TestCase):
         # next to the download, which is the moment they decide to go ahead
         export = self.page.split("<h2>내보내기</h2>")[1].split("</div>\n  </div>")[0]
         self.assertIn("openModal('aftermodal')", export)
+
+
+class TypingIntoTheSlotEditor(unittest.TestCase):
+    """render() rebuilds the slot list with innerHTML, which destroys the field being typed
+    into and takes the caret with it -- one character per click, then click again for the
+    next one. This is the second time it happened: the wizard had it first, and adding the
+    manual slot editor brought it back somewhere else.
+
+    The fix is that the caller says whether it is a keystroke. Inferring it from focus is
+    not enough -- clicking a button does not move focus in Safari, so "a text field still
+    has focus" is also true while someone deletes a slot, and skipping the rebuild there
+    leaves the deleted slot on screen. Found by testing exactly that.
+    """
+
+    def setUp(self):
+        self.source = page_source()
+
+    def test_render_is_told_whether_it_is_a_keystroke(self):
+        self.assertIn("function render(opts)", self.source)
+        self.assertIn("opts && opts.typing && slotsAreBeingTyped()", self.source)
+
+    def test_a_keystroke_does_not_rebuild_but_a_change_does(self):
+        listeners = re.findall(r'document\.addEventListener\("(input|change)",[^\n]*render\(([^)]*)\)',
+                               self.source)
+        self.assertEqual(dict(listeners).get("input", "").strip(), "{typing: true}")
+        self.assertEqual(dict(listeners).get("change", "").strip(), "",
+                         "a change really does restructure the editor; it must redraw")
+
+    def test_upd_only_claims_a_keystroke_for_fields_that_restructure_nothing(self):
+        self.assertIn("render({typing: TYPED_KEYS.includes(key)});", self.source)
+        keys = re.search(r"const TYPED_KEYS = \[([^\]]*)\]", self.source).group(1)
+        self.assertEqual(sorted(re.findall(r'"(\w+)"', keys)), ["max", "min", "text"])
+        # type, mode, optional and keystrokes all change what belongs on screen
+        for structural in ("type", "mode", "optional", "keystrokes"):
+            self.assertNotIn('"%s"' % structural, keys)
+
+    def test_the_counts_still_update_while_typing(self):
+        # skipping the rebuild must not freeze the number next to the slot; feedback while
+        # typing is the point of the panel
+        self.assertIn("function refreshSlotCounts()", self.source)
+        body = self.source.split("function refreshSlotCounts()")[1].split("\n}")[0]
+        self.assertIn("textContent", body)
+        self.assertNotIn("innerHTML", body)
+
+
+class Theme(unittest.TestCase):
+    """Light and dark, and the switch between them."""
+
+    def setUp(self):
+        self.css = read(STYLES)
+        self.page = page_source()
+
+    def palette(self, selector):
+        """The custom properties declared in the block introduced by `selector`."""
+        start = self.css.index(selector)
+        block = self.css[start:].split("{", 1)[1]
+        depth, out = 1, []
+        for ch in block:
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            out.append(ch)
+        return dict(re.findall(r"(--[\w-]+)\s*:\s*([^;]+);", "".join(out)))
+
+    def test_both_routes_to_dark_agree(self):
+        """Dark arrives two ways -- the OS asked, or the visitor pressed the switch.
+
+        The values have to be written twice because CSS has no way to share them between a
+        media query and an attribute selector. Two copies drift, and drift here shows up as
+        a page that looks different depending on which route made it dark: the sort of
+        thing nobody notices for months and then cannot explain.
+        """
+        by_system = self.palette(':root:not([data-theme="light"])')
+        by_choice = self.palette(':root[data-theme="dark"]')
+        self.assertTrue(by_system, "the system-dark palette is gone")
+        self.assertEqual(by_system, by_choice)
+
+    def test_choosing_beats_the_system_in_both_directions(self):
+        # dark-by-choice wins over a light system, and the media query steps aside for
+        # light-by-choice. Miss either and the switch only works one way.
+        self.assertIn(':root[data-theme="dark"]', self.css)
+        self.assertIn(':root:not([data-theme="light"])', self.css)
+
+    def test_the_choice_is_not_kept(self):
+        # the page says it keeps nothing about the visitor; a remembered theme would be an
+        # exception to a sentence that is worth more whole
+        for storage in ("localStorage", "sessionStorage", "document.cookie", "indexedDB"):
+            self.assertNotIn(storage, self.page)
+
+    def test_the_switch_says_where_it_goes(self):
+        # an icon with no label is a guess; the button carries the destination
+        self.assertIn('id="themetoggle"', self.page)
+        self.assertIn("밝은 화면으로 바꾸기", self.page)
+        self.assertIn("어두운 화면으로 바꾸기", self.page)
+        self.assertIn("aria-label", self.page)
+
+
+class Stylesheet(unittest.TestCase):
+    """The styles live in their own file now, which the policy has to allow."""
+
+    def test_the_page_links_it(self):
+        self.assertIn('href="diagnostic.css"', page_source())
+        self.assertNotIn("<style>", page_source())
+
+    def test_the_policy_allows_it_without_opening_anything_else(self):
+        headers = read(HEADERS)
+        self.assertIn("style-src 'self' 'unsafe-inline'", headers)
+        # the line the whole page rests on, unchanged
+        self.assertIn("connect-src 'none'", headers)
+        self.assertIn("default-src 'none'", headers)
+
+    def test_the_stylesheet_fetches_nothing(self):
+        # a CSS file can reach the network too -- @import, url(), a webfont
+        css = read(STYLES)
+        for reach in ("@import", "http://", "https://", "//fonts."):
+            self.assertNotIn(reach, css)
 
 
 if __name__ == '__main__':
