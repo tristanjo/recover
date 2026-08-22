@@ -165,3 +165,85 @@ should open with no warning at all. If it still asks, the notarisation ticket wa
 stapled — `stapler staple` runs in the same step, and the log will say.
 
 The certificate expires after five years; the API key does not expire but can be revoked.
+
+---
+
+# For the maintainer: turning on Windows signing
+
+Windows uses **Azure Artifact Signing** (the service formerly called Trusted Signing). The
+certificate never leaves Microsoft's service — the build sends hashes and gets signatures
+back — so there is no key material in the repository or on any laptop.
+
+Six secrets switch it on. Until they exist the build still runs, self-tests, and publishes a
+hash; it warns loudly that it is unsigned and says so in the release notes.
+
+## Before anything else: this needs a company, and a domain
+
+**Individual validation is only available in the United States and Canada.** Organization
+validation *is* available in South Korea, so this has to go through a registered business
+entity (사업자등록), not a personal account.
+
+Organization validation also asks for a **website on a domain the entity owns** and a
+**monitored email address on that same domain**. `paph.pages.dev` will not do — a custom
+domain was already on the list, and this makes it a prerequisite rather than a nicety.
+
+A **paid** Azure subscription is required: free, trial and sponsored subscriptions are
+rejected when creating the account.
+
+Validation takes **1 to 20 business days**, longer if more documents are requested. Start it
+well before it is needed.
+
+## 1. Create the account
+
+Register the `Microsoft.CodeSigning` resource provider on the subscription, then create an
+**Artifact Signing account**. `Korea Central` is a supported region, so the endpoint is
+`https://krc.codesigning.azure.net`.
+
+Basic is $9.99 a month and covers 5,000 signatures — this build signs roughly twenty files
+per run, so that is hundreds of builds.
+
+## 2. Validate the organisation
+
+In the account: **Identity validations → Organization → New Identity → Public**. It asks for
+the legal entity name, the website and email on its domain, a business identifier, and the
+business address. A named individual then completes a photo-ID and face check.
+
+Whatever is entered here is what appears on the certificate, and on the SmartScreen prompt a
+customer sees. It cannot be edited afterwards — a change means a new validation.
+
+## 3. Create a certificate profile
+
+**Certificate profiles → Create → Public Trust**, pointing at the completed validation.
+
+## 4. Create a service principal for the build
+
+Create an app registration with a client secret, then give it the **Artifact Signing
+Certificate Profile Signer** role on the resource group. Without that role, signing returns
+403.
+
+## 5. Add the secrets
+
+| Secret | What goes in it |
+|---|---|
+| `AZURE_TENANT_ID` | directory (tenant) ID |
+| `AZURE_CLIENT_ID` | application (client) ID of the app registration |
+| `AZURE_CLIENT_SECRET` | its client secret |
+| `AZURE_SIGNING_ENDPOINT` | e.g. `https://krc.codesigning.azure.net` |
+| `AZURE_SIGNING_ACCOUNT` | the Artifact Signing account name |
+| `AZURE_CERT_PROFILE` | the certificate profile name |
+
+## 6. Check it took
+
+The build prints `signature status: Valid` and the signer's subject. If an account is
+configured but the signature is not valid, the build **fails** rather than publishing
+something that looks signed from outside.
+
+## What signing does not fix straight away
+
+**SmartScreen still warns until the file builds reputation.** Microsoft is explicit about
+this: the prompt stops once a file has enough download history. Artifact Signing does not
+issue EV certificates and there is no plan to, so there is no way to buy instant reputation.
+
+What signing changes is the *content* of the warning: instead of an unknown publisher, it
+names the validated legal entity. For a service asking someone to trust it with a seed
+phrase, that difference is the point.

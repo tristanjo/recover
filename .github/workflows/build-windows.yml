@@ -44,6 +44,18 @@ env:
 jobs:
   build:
     runs-on: windows-latest
+
+    # At job level on purpose. A step's own `env:` block is NOT in scope for that step's
+    # `if:`, so `if: env.X != ''` beside `env: X: ${{ secrets.X }}` reads as empty and the
+    # step never runs -- signing silently skipped on a build we then publish. Job-level env
+    # is in scope for step conditions, and workflow-level env cannot see secrets at all.
+    env:
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+      AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+      AZURE_CERT_PROFILE: ${{ secrets.AZURE_CERT_PROFILE }}
     # A hang here is not hypothetical: the search spawns worker processes, and a build
     # that waits forever costs the same as one that fails, only quietly and for hours.
     timeout-minutes: 30
@@ -98,6 +110,53 @@ jobs:
 
       - name: Build
         run: pyinstaller --noconfirm --clean recovery_gui.spec
+
+      - name: Sign with Azure Artifact Signing
+        # Formerly "Trusted Signing". Certificates live in the service and are never handed
+        # out; the runner authenticates and sends hashes. Skipped without the secrets.
+        #
+        # Every exe and dll, not just the outer executable: SmartScreen and antivirus
+        # heuristics look at what a program loads, and a signed launcher pulling in twenty
+        # unsigned libraries is a shape that gets flagged.
+        if: env.AZURE_SIGNING_ACCOUNT != ''
+        uses: azure/trusted-signing-action@v2
+        with:
+          azure-tenant-id: ${{ env.AZURE_TENANT_ID }}
+          azure-client-id: ${{ env.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ env.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ env.AZURE_SIGNING_ENDPOINT }}
+          # `signing-account-name` since v2; v0 and v1 called it
+          # `trusted-signing-account-name`. Changing the pin above means changing this.
+          signing-account-name: ${{ env.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ env.AZURE_CERT_PROFILE }}
+          files-folder: dist\passphrase-recovery
+          files-folder-filter: exe,dll
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Say whether this build is signed
+        # A quietly unsigned release is worse than a loudly unsigned one: the customer meets
+        # SmartScreen with no warning and no instructions. Worse still is a build where the
+        # certificate was configured and signing did not take -- that looks exactly like
+        # success from outside, so it is an error rather than a warning.
+        run: |
+          $sig = Get-AuthenticodeSignature "dist\passphrase-recovery\passphrase-recovery.exe"
+          Write-Host "signature status: $($sig.Status)"
+          if ($sig.SignerCertificate) { Write-Host "signer: $($sig.SignerCertificate.Subject)" }
+          if ($sig.Status -eq "Valid") {
+            echo "SIGNED=yes" >> $env:GITHUB_ENV
+            "Signed: $($sig.SignerCertificate.Subject)" >> $env:GITHUB_STEP_SUMMARY
+          } elseif ($env:AZURE_SIGNING_ACCOUNT) {
+            Write-Error "a signing account is configured but the build is not validly signed ($($sig.Status))"
+            exit 1
+          } else {
+            echo "SIGNED=no" >> $env:GITHUB_ENV
+            Write-Warning "unsigned build -- SmartScreen will warn on first run"
+            "**This build is not signed.** SmartScreen will warn the first time it runs." >> $env:GITHUB_STEP_SUMMARY
+            "See docs/Verifying_The_Download.md." >> $env:GITHUB_STEP_SUMMARY
+          }
 
       - name: Self-test the built program
         timeout-minutes: 5
@@ -194,6 +253,11 @@ jobs:
           Check it works before trusting it with a seed phrase: the window's first screen has
           a self-test that recovers a known passphrase from the published BIP39 test vector.
           "@
+          if ($env:SIGNED -ne "yes") {
+            # Say it where the customer downloads from, not only in a log they never open.
+            $notes += "`n`n**This Windows build is not signed.** SmartScreen will warn the "
+            $notes += "first time it runs. See ``docs/Verifying_The_Download.md``."
+          }
           $notes | Out-File -FilePath notes.md -Encoding utf8
           # Created if absent rather than unconditionally: the macOS workflow builds the
           # same tag, and whichever job arrives first makes the release.
