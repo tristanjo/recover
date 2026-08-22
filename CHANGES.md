@@ -63,6 +63,35 @@ win rather than the second one failing.
 
 ---
 
+## 2026-08-22 — Ask about the network instead of locking the button, and make the window readable
+
+**Changed:** `recovery_gui.py`, `btcrecover/test/test_recovery_gui.py`
+
+The seed screen refused to start while a network route existed, and offered a checkbox
+saying the reading was a false positive from a virtual adapter. That was wrong for the
+common case it did not consider: someone trying the program out, who has no seed to protect
+and no reason to unplug their machine. The only way past was to claim something untrue.
+
+It asks now, at the moment it means something. The button always works; pressing it with a
+live network opens one dialog that says what the risk is and defaults to cancel, so a stray
+Return cannot start a search on a connected machine. The earlier screen still shows the
+warning, and now adds that trying it out this way is fine.
+
+Two of the three old tests were asserting the button was disabled, so they were rewritten
+rather than repaired. A third problem surfaced immediately: every test that calls
+`start_search()` now met a modal dialog and sat waiting for a human. The suite took 164
+seconds instead of four before anyone noticed what it was doing. The fixture forces the
+route check off.
+
+**And the window was hard to read.** Every colour in it was a light-theme hex — `#555`,
+`#666` — written when the only machine it had run on drew light windows. ttk follows the
+system, so on a Mac in dark mode the window went dark and the text did not: grey on
+near-black. Nothing failed and nothing warned; it was simply hard to read, which for a
+program a nervous person is trying to follow is its own kind of failure. The palette is now
+read from what the theme is actually drawing, and body text went from 11pt to 12pt.
+
+---
+
 ## 2026-08-22 — A slot for what nobody remembers, and one search across several machines
 
 **Changed:** `btcrecover/passphrase_grammar.py`, `btcrecover/embed.py`, `recovery_gui.py`,

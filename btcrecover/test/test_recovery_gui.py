@@ -163,10 +163,21 @@ class Helpers(unittest.TestCase):
 ROUTE_CHECK = recovery_gui.has_default_route
 
 
+def read_source():
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "..", "..", "recovery_gui.py")
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
 @unittest.skipUnless(can_open_a_window, "no display available")
 class Screens(unittest.TestCase):
 
     def setUp(self):
+        # These drive start_search() directly. Without this the confirmation dialog opens
+        # and the suite sits waiting for a human -- 164 seconds the first time it happened.
+        recovery_gui.has_default_route = lambda: False
+        self.addCleanup(setattr, recovery_gui, "has_default_route", ROUTE_CHECK)
         self.app = APP
         self.app.config_path = self.app.config_data = self.app.plan = self.app.result = None
         self.app.skip = 0
@@ -248,55 +259,79 @@ class Screens(unittest.TestCase):
         self.app._count_words()
         self.assertEqual(self.app.word_count.cget("text"), "3 단어")
 
-    def test_the_seed_screen_is_shut_while_the_network_is_up(self):
-        """The one screen where a secret is typed is the one that has to bite.
+    def test_colours_follow_the_theme_rather_than_being_written_down(self):
+        """Every colour here used to be a light-theme hex.
 
-        Offline is not proof of anything -- a program that wanted to steal a seed would
-        write it down and send it later, and the check would be its own word for it. What
-        this does stop is the honest failure: someone who meant to disconnect and forgot.
+        ttk draws the window in whatever the system asks for, so on a Mac in dark mode the
+        window went dark and the text stayed #555 and #666 -- grey on near-black. Nothing
+        failed; it was simply hard to read, which for a program a nervous person is trying
+        to follow is its own kind of failure.
+        """
+        source = read_source()
+        self.assertNotIn('foreground="#', source,
+                         "a colour is written down again instead of coming from the theme")
+        self.assertIn("_install_palette", source)
+        for key in ("muted", "dim", "ok", "warn", "bad"):
+            self.assertIn(key, self.app.c)
+        # and the palette actually differs by theme, rather than being one set with two names
+        self.assertNotEqual(self.app.c["muted"], self.app.c["bad"])
+
+    def test_body_text_is_not_the_smallest_the_toolkit_offers(self):
+        import tkinter.font as tkfont
+        self.assertGreaterEqual(tkfont.nametofont("TkDefaultFont").cget("size"), 12)
+
+    def test_being_online_is_a_question_not_a_lock(self):
+        """Someone trying the program out has no seed to protect.
+
+        This used to disable the button and offer a checkbox saying the network reading was
+        a false positive -- which made anyone genuinely online claim something untrue to get
+        past it. The check belongs at the moment a real seed is about to be searched, and it
+        is a question there, asked once, defaulting to no.
         """
         self._load()
         recovery_gui.has_default_route = lambda: True
         try:
             self.app.show_mnemonic()
             self.app.update_idletasks()
-            self.assertIn("disabled", self.app.start_button.state())
+            self.assertNotIn("disabled", self.app.start_button.state())
             self.assertIn("네트워크가 아직 연결되어 있습니다", self._all_text())
+            self.assertIn("시험 삼아 돌려보는 중이라면", self._all_text())
         finally:
             recovery_gui.has_default_route = ROUTE_CHECK
 
-    def test_the_seed_screen_opens_when_the_network_is_down(self):
+    def test_starting_while_online_asks_first(self):
         self._load()
+        self.app.show_mnemonic()
+        self.app.mnemonic_text.insert("1.0", MNEMONIC)
+        asked, answer = [], False
+        recovery_gui.has_default_route = lambda: True
+        original = recovery_gui.messagebox.askokcancel
+        recovery_gui.messagebox.askokcancel = lambda *a, **k: (asked.append((a, k)), answer)[1]
+        try:
+            self.app.start_search()
+            self.assertEqual(len(asked), 1, "no confirmation was asked for")
+            self.assertIs(self.app.result, None, "the search started despite a refusal")
+            # defaults to cancel: a stray Return must not start a search on a live network
+            self.assertEqual(asked[0][1].get("default"), recovery_gui.messagebox.CANCEL)
+        finally:
+            recovery_gui.messagebox.askokcancel = original
+            recovery_gui.has_default_route = ROUTE_CHECK
+
+    def test_offline_starts_without_asking(self):
+        self._load()
+        self.app.show_mnemonic()
+        self.app.mnemonic_text.insert("1.0", MNEMONIC)
+        asked = []
         recovery_gui.has_default_route = lambda: False
+        original = recovery_gui.messagebox.askokcancel
+        recovery_gui.messagebox.askokcancel = lambda *a, **k: asked.append(1) or True
         try:
-            self.app.show_mnemonic()
-            self.app.update_idletasks()
-            self.assertNotIn("disabled", self.app.start_button.state())
+            self.app.start_search()
+            self._wait_for_result()
+            self.assertFalse(asked, "asked about a network that is not there")
+            self.assertTrue(self.app.result.found)
         finally:
-            recovery_gui.has_default_route = ROUTE_CHECK
-
-    def test_a_virtual_adapter_can_be_overridden_deliberately(self):
-        # an OS reports a default route for VPN, VM and container adapters too, so a check
-        # with no way past would lock out people who really are offline
-        self._load()
-        recovery_gui.has_default_route = lambda: True
-        try:
-            self.app.show_mnemonic()
-            self.app.update_idletasks()
-            self.assertIn("disabled", self.app.start_button.state())
-            self.app.override.set(True)
-            self.app._apply_gate()
-            self.assertNotIn("disabled", self.app.start_button.state())
-        finally:
-            recovery_gui.has_default_route = ROUTE_CHECK
-
-    def test_the_override_starts_off(self):
-        self._load()
-        recovery_gui.has_default_route = lambda: True
-        try:
-            self.app.show_mnemonic()
-            self.assertFalse(self.app.override.get())
-        finally:
+            recovery_gui.messagebox.askokcancel = original
             recovery_gui.has_default_route = ROUTE_CHECK
 
     def test_a_full_run_finds_it_and_names_the_form(self):
@@ -385,6 +420,10 @@ class ResumeFile(unittest.TestCase):
     """The resume file records a position and nothing else."""
 
     def setUp(self):
+        # These drive start_search() directly. Without this the confirmation dialog opens
+        # and the suite sits waiting for a human -- 164 seconds the first time it happened.
+        recovery_gui.has_default_route = lambda: False
+        self.addCleanup(setattr, recovery_gui, "has_default_route", ROUTE_CHECK)
         self.app = APP
         self.tmp = tempfile.mkdtemp()
         self.app.config_path = os.path.join(self.tmp, "config.json")

@@ -95,6 +95,7 @@ class RecoveryApp(tk.Tk):
         self.geometry("720x560")
         self.minsize(640, 520)
 
+        self._install_palette()
         self._install_fonts()
         self.config_path = None
         self.config_data = None
@@ -111,6 +112,29 @@ class RecoveryApp(tk.Tk):
         self.container = container
         self.show_checks()
 
+    def _install_palette(self):
+        """Colours picked from the theme rather than written down.
+
+        Every colour here used to be a light-theme hex. On a Mac in dark mode ttk draws the
+        window dark and the text stayed #555 and #666 -- grey on near-black, which is where
+        the readability went. Ask the theme what it is actually drawing, then pick a set
+        that can be read on it.
+        """
+        try:
+            background = ttk.Style().lookup("TLabel", "background") or self.cget("background")
+            r, g, b = (v / 65535.0 for v in self.winfo_rgb(background))
+            dark = (0.2126 * r + 0.7152 * g + 0.0722 * b) < 0.5
+        except tk.TclError:
+            dark = False
+        self.dark = dark
+        self.c = {
+            "muted": "#a9a5b3" if dark else "#4b4843",   # secondary text
+            "dim":   "#8f8b99" if dark else "#5f5c55",   # status lines, captions
+            "ok":    "#4ade80" if dark else "#15803d",
+            "warn":  "#fbbf24" if dark else "#a16207",
+            "bad":   "#f87171" if dark else "#b91c1c",
+        }
+
     def _install_fonts(self):
         families = set(tkfont.families())
         for name in ("Pretendard", "Malgun Gothic", "Apple SD Gothic Neo", "NanumGothic"):
@@ -118,7 +142,7 @@ class RecoveryApp(tk.Tk):
                 for style in ("TkDefaultFont", "TkTextFont", "TkHeadingFont", "TkMenuFont"):
                     tkfont.nametofont(style).configure(family=name)
                 break
-        tkfont.nametofont("TkDefaultFont").configure(size=11)
+        tkfont.nametofont("TkDefaultFont").configure(size=12)
         self.title_font = tkfont.Font(font=tkfont.nametofont("TkDefaultFont"))
         self.title_font.configure(size=16, weight="bold")
         self.mono = tkfont.Font(family="Consolas" if "Consolas" in families else "Courier", size=13)
@@ -167,7 +191,7 @@ class RecoveryApp(tk.Tk):
     def _heading(self, text, subtitle=None):
         ttk.Label(self.container, text=text, font=self.title_font).pack(anchor="w")
         if subtitle:
-            ttk.Label(self.container, text=subtitle, foreground="#555",
+            ttk.Label(self.container, text=subtitle, foreground=self.c["dim"],
                       wraplength=640, justify="left").pack(anchor="w", pady=(4, PAD))
         else:
             ttk.Frame(self.container, height=PAD).pack()
@@ -182,14 +206,14 @@ class RecoveryApp(tk.Tk):
         box = ttk.LabelFrame(self.container, text=" 1. 네트워크 연결 ", padding=12)
         box.pack(fill="x", pady=(0, 12))
         if online:
-            ttk.Label(box, foreground="#b45309", wraplength=620, justify="left",
+            ttk.Label(box, foreground=self.c["warn"], wraplength=620, justify="left",
                       text="이 컴퓨터는 아직 네트워크에 연결되어 있습니다.\n"
                            "랜선을 뽑고 Wi-Fi를 끈 뒤 [다시 확인]을 눌러 주세요. "
                            "이 프로그램은 네트워크를 쓰지 않지만, 같은 컴퓨터의 다른 프로그램은 "
                            "그렇지 않을 수 있습니다.").pack(anchor="w")
             ttk.Button(box, text="다시 확인", command=self.show_checks).pack(anchor="w", pady=(8, 0))
         else:
-            ttk.Label(box, foreground="#15803d",
+            ttk.Label(box, foreground=self.c["ok"],
                       text="네트워크에 연결되어 있지 않습니다. 좋습니다.").pack(anchor="w")
 
         box2 = ttk.LabelFrame(self.container, text=" 2. 동작 자가검증 ", padding=12)
@@ -206,12 +230,12 @@ class RecoveryApp(tk.Tk):
                        "있기 때문입니다. 그래서 이 결과는 다른 곳에서도 대조해볼 수 있습니다 — "
                        "저희가 고른 값이었다면 프로그램이 제 말에 동의한다는 것밖에 증명하지 "
                        "못합니다.").pack(anchor="w")
-        self.selftest_label = ttk.Label(box2, text="", foreground="#555")
+        self.selftest_label = ttk.Label(box2, text="", foreground=self.c["dim"])
         self.selftest_label.pack(anchor="w", pady=(8, 0))
         self.selftest_button = ttk.Button(box2, text="자가검증 실행", command=self.run_self_test)
         self.selftest_button.pack(anchor="w", pady=(8, 0))
 
-        ttk.Label(self.container, foreground="#666", wraplength=640, justify="left",
+        ttk.Label(self.container, foreground=self.c["muted"], wraplength=640, justify="left",
                   text="이 프로그램은 어떤 네트워크 요청도 하지 않습니다. 위의 연결 확인은 "
                        "패킷을 보내지 않고 운영체제의 경로표만 읽습니다.").pack(anchor="w", pady=(4, 12))
 
@@ -221,7 +245,7 @@ class RecoveryApp(tk.Tk):
 
     def run_self_test(self):
         self.selftest_button.state(["disabled"])
-        self.selftest_label.configure(text="실행 중...", foreground="#555")
+        self.selftest_label.configure(text="실행 중...", foreground=self.c["dim"])
         self.selftest_result = None
 
         def work():
@@ -249,11 +273,11 @@ class RecoveryApp(tk.Tk):
         if result.found and result.passphrase == SELF_TEST["passphrase"]:
             self.selftest_label.configure(
                 text="통과 — 표준 문서에 적힌 답 '{}' 을 {:.1f}초 만에 찾았습니다.".format(
-                    result.passphrase, result.elapsed), foreground="#15803d")
+                    result.passphrase, result.elapsed), foreground=self.c["ok"])
         else:
             self.selftest_label.configure(
                 text="실패 — " + (result.error or "정답을 찾지 못했습니다") +
-                     "\n이 상태로는 본인 시드를 넣지 마세요.", foreground="#b91c1c")
+                     "\n이 상태로는 본인 시드를 넣지 마세요.", foreground=self.c["bad"])
 
     # ---- 2. config -------------------------------------------------------
 
@@ -340,12 +364,12 @@ class RecoveryApp(tk.Tk):
         if self.skip:
             rows.append(("이어서 시작", "{:,}번째부터 (남은 {:,}개)".format(self.skip, total - self.skip)))
         for i, (label, value) in enumerate(rows):
-            ttk.Label(grid, text=label, foreground="#666").grid(row=i, column=0, sticky="nw", pady=3)
+            ttk.Label(grid, text=label, foreground=self.c["muted"]).grid(row=i, column=0, sticky="nw", pady=3)
             ttk.Label(grid, text=value, wraplength=460, justify="left").grid(
                 row=i, column=1, sticky="w", padx=(16, 0), pady=3)
 
         if len(plan.normalizations) > 1:
-            ttk.Label(self.container, foreground="#b45309", wraplength=640, justify="left",
+            ttk.Label(self.container, foreground=self.c["warn"], wraplength=640, justify="left",
                       text="패스프레이즈에 한글 등 비ASCII 문자가 있어, 지갑이 저장했을 수 있는 "
                            "여러 유니코드 형태를 모두 시도합니다.").pack(anchor="w", pady=(0, 12))
 
@@ -372,11 +396,11 @@ class RecoveryApp(tk.Tk):
         self.mnemonic_text.pack(fill="x", pady=(0, 6))
         self.mnemonic_text.focus_set()
 
-        self.word_count = ttk.Label(self.container, text="0 단어", foreground="#666")
+        self.word_count = ttk.Label(self.container, text="0 단어", foreground=self.c["muted"])
         self.word_count.pack(anchor="w")
         self.mnemonic_text.bind("<KeyRelease>", self._count_words)
 
-        ttk.Label(self.container, foreground="#b45309", wraplength=640, justify="left",
+        ttk.Label(self.container, foreground=self.c["warn"], wraplength=640, justify="left",
                   text="복구에 성공하면 자금을 곧바로 새 지갑으로 옮기세요. 이 시드 문구는 "
                        "복구 과정에서 이 컴퓨터의 메모리를 거치므로 더 이상 안전하다고 볼 수 "
                        "없습니다. 이 컴퓨터를 다시 인터넷에 연결할 필요는 없습니다 \u2014 "
@@ -389,7 +413,6 @@ class RecoveryApp(tk.Tk):
         # right -- a config file holds no secret and there is nothing to protect yet.
         self.gate = ttk.Frame(self.container)
         self.gate.pack(fill="x", pady=(12, 0))
-        self.override = tk.BooleanVar(value=False)
         self.start_button = None
         self._render_gate()
 
@@ -408,7 +431,7 @@ class RecoveryApp(tk.Tk):
             ok = ttk.Frame(self.gate)
             ok.pack(fill="x")
             self._icon(ok, "ok", 24).pack(side="left", padx=(0, 9))
-            ttk.Label(ok, foreground="#15803d", font=self.bold,
+            ttk.Label(ok, foreground=self.c["ok"], font=self.bold,
                       text="네트워크에 연결되어 있지 않습니다").pack(side="left")
             return
 
@@ -419,7 +442,7 @@ class RecoveryApp(tk.Tk):
         self._icon(head, "warn", 30).pack(side="left", padx=(0, 11), anchor="n")
         said = ttk.Frame(head)
         said.pack(side="left", fill="x", expand=True)
-        ttk.Label(said, foreground="#b91c1c", font=self.alarm,
+        ttk.Label(said, foreground=self.c["bad"], font=self.alarm,
                   text="네트워크가 아직 연결되어 있습니다").pack(anchor="w")
         ttk.Label(said, wraplength=560, justify="left", padding=(0, 5, 0, 0),
                   text="랜선을 뽑고 Wi-Fi를 끈 뒤 [다시 확인]을 눌러 주세요.\n"
@@ -429,24 +452,24 @@ class RecoveryApp(tk.Tk):
         row.pack(anchor="w", pady=(10, 0))
         ttk.Button(row, text="다시 확인", command=self._recheck_gate).pack(side="left")
 
-        # An OS reports a default route for VPN, virtual machine and container adapters
-        # too, so a check that cannot be overridden would lock out people who really are
-        # offline. The override is deliberate and says what it is; it is here to stop
-        # someone forgetting, not to stop someone who has decided.
-        ttk.Checkbutton(box, variable=self.override, command=self._apply_gate,
-                        text="가상 어댑터(VPN, 가상머신 등) 때문이며 실제로는 "
-                             "연결되어 있지 않습니다. 확인했고 진행합니다."
-                        ).pack(anchor="w", pady=(8, 0))
+        # Not a lock. Someone trying the program out has no seed phrase to protect and no
+        # reason to unplug their machine, and an override framed as "this is a false
+        # positive" would make them claim something untrue to get past it. The check that
+        # matters happens when a real seed is about to be searched -- see start_search.
+        ttk.Label(box, foreground=self.c["dim"], wraplength=560, justify="left",
+                  padding=(0, 8, 0, 0),
+                  text="시험 삼아 돌려보는 중이라면 이대로 진행하셔도 됩니다. "
+                       "실제 시드 문구를 넣기 직전에 한 번 더 확인합니다."
+                  ).pack(anchor="w")
 
     def _recheck_gate(self):
         self._render_gate()
         self._apply_gate()
 
     def _apply_gate(self):
-        if self.start_button is None:
-            return
-        blocked = has_default_route() and not self.override.get()
-        self.start_button.state(["disabled"] if blocked else ["!disabled"])
+        # kept so _render_gate's callers have something to call; the decision moved to
+        # start_search, where the seed phrase is actually about to be used
+        return
 
     def _count_words(self, _event=None):
         words = self.mnemonic_text.get("1.0", "end").split()
@@ -458,6 +481,21 @@ class RecoveryApp(tk.Tk):
         mnemonic = " ".join(self.mnemonic_text.get("1.0", "end").split())
         if not mnemonic:
             messagebox.showwarning("시드 문구가 비어 있습니다", "단어를 입력해 주세요.")
+            return
+
+        # Asked here rather than enforced earlier. Until this button is pressed there is
+        # nothing to protect, and someone testing the program should not have to unplug
+        # their machine or claim their network is a false positive. From here on there is
+        # a seed phrase in memory, so the question gets asked once, plainly, defaulting to
+        # no.
+        if has_default_route() and not messagebox.askokcancel(
+                "네트워크에 연결된 채로 진행합니다",
+                "이 컴퓨터는 지금 인터넷에 연결되어 있습니다.\n\n"
+                "실제로 쓰던 시드 문구라면 여기서 멈추고 랜선을 뽑거나 Wi-Fi를 끈 뒤 "
+                "다시 시작하세요. 이 프로그램은 네트워크를 쓰지 않지만, 같은 컴퓨터의 "
+                "다른 프로그램까지 그렇다고 보장할 수는 없습니다.\n\n"
+                "시험용 시드 문구이거나 이대로 괜찮다면 [확인]을 누르세요.",
+                icon=messagebox.WARNING, default=messagebox.CANCEL):
             return
 
         self.abort = threading.Event()
@@ -486,7 +524,7 @@ class RecoveryApp(tk.Tk):
         self.bar.pack(fill="x", pady=(0, 10))
         self.stat_tried = ttk.Label(self.container, text="", font=self.mono)
         self.stat_tried.pack(anchor="w")
-        self.stat_rate = ttk.Label(self.container, text="", foreground="#666")
+        self.stat_rate = ttk.Label(self.container, text="", foreground=self.c["muted"])
         self.stat_rate.pack(anchor="w", pady=(4, 0))
 
         nav = ttk.Frame(self.container)
@@ -525,7 +563,7 @@ class RecoveryApp(tk.Tk):
 
         if result.error:
             self._heading("오류", "검색을 시작하지 못했습니다.")
-            ttk.Label(self.container, text=result.error, foreground="#b91c1c",
+            ttk.Label(self.container, text=result.error, foreground=self.c["bad"],
                       wraplength=640, justify="left").pack(anchor="w")
         elif result.found:
             self._heading("찾았습니다")
@@ -536,7 +574,7 @@ class RecoveryApp(tk.Tk):
             value.configure(state="disabled")
             value.pack(fill="x")
             if result.normalization:
-                ttk.Label(found, foreground="#666", wraplength=600, justify="left",
+                ttk.Label(found, foreground=self.c["muted"], wraplength=600, justify="left",
                           text="유니코드 형태: {}  —  화면으로는 구분되지 않으므로, 다른 지갑에 "
                                "다시 입력할 때 같은 형태로 넣어야 같은 지갑이 열립니다.".format(
                                    result.normalization)).pack(anchor="w", pady=(8, 0))
@@ -546,7 +584,7 @@ class RecoveryApp(tk.Tk):
             # nothing, and that is a thing the customer does, in the next few minutes.
             after = ttk.LabelFrame(self.container, text=" 지금 해야 할 일 ", padding=14)
             after.pack(fill="x", pady=(4, 0))
-            ttk.Label(after, foreground="#b91c1c", font=self.bold, wraplength=600,
+            ttk.Label(after, foreground=self.c["bad"], font=self.bold, wraplength=600,
                       justify="left",
                       text="찾은 즉시 자금을 새 지갑으로 옮기세요.").pack(anchor="w")
             ttk.Label(after, wraplength=600, justify="left", text=(
@@ -564,7 +602,7 @@ class RecoveryApp(tk.Tk):
             # The device that broadcasts never sees a private key, so it has nothing to
             # steal. What it can do is show one address and send to another, and the only
             # defence is the hardware wallet's own screen. It is the step people skip.
-            ttk.Label(after, foreground="#b91c1c", font=self.bold, wraplength=600,
+            ttk.Label(after, foreground=self.c["bad"], font=self.bold, wraplength=600,
                       justify="left",
                       text="보내기 전에 받는 주소를 하드웨어 지갑 화면에서 직접 확인하세요."
                       ).pack(anchor="w", pady=(10, 0))
@@ -577,7 +615,7 @@ class RecoveryApp(tk.Tk):
             # need is *this* machine. And a middle hop through a phone wallet is worse,
             # not better: two fees, and the coins sit under a key held on a networked
             # device in between.
-            ttk.Label(after, foreground="#b45309", wraplength=600, justify="left", text=(
+            ttk.Label(after, foreground=self.c["warn"], wraplength=600, justify="left", text=(
                 "방송에는 인터넷에 연결된 기기가 하나 필요하지만, 그것이 이 컴퓨터일 필요는 "
                 "없습니다. 하드웨어 지갑을 쓰면 서명이 기기 안에서 끝나므로 시드 문구가 인터넷에 "
                 "연결된 기기에 올라가지 않습니다. BIP39 패스프레이즈를 지원하는 기기여야 합니다 "
@@ -588,12 +626,12 @@ class RecoveryApp(tk.Tk):
             # Waiting for hardware to arrive is not free: if the seed did leak, the race is
             # already running. Somewhere imperfect but under their control, today, beats
             # perfect in three days.
-            ttk.Label(after, foreground="#555", wraplength=600, justify="left", text=(
+            ttk.Label(after, foreground=self.c["dim"], wraplength=600, justify="left", text=(
                 "하드웨어 지갑이 없다면 — 주문해서 기다리는 동안에도 위험은 계속됩니다. "
                 "본인 명의 거래소 계정이나 새로 설치한 휴대폰 지갑으로 먼저 옮겨 두고, "
                 "기기가 도착하면 그때 다시 옮기세요."
             )).pack(anchor="w", pady=(8, 0))
-            ttk.Label(after, foreground="#555", wraplength=600, justify="left", text=(
+            ttk.Label(after, foreground=self.c["dim"], wraplength=600, justify="left", text=(
                 "이 시드 문구와 패스프레이즈는 방금 이 컴퓨터의 메모리를 거쳤습니다. "
                 "이 프로그램이 아니더라도 이 컴퓨터에 다른 무엇이 있었는지는 아무도 "
                 "증명할 수 없습니다. 자금을 옮기고 나면 옛 시드가 새어 나갔더라도 "
