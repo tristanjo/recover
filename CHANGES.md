@@ -63,6 +63,46 @@ win rather than the second one failing.
 
 ---
 
+## 2026-08-22 — Four letters per word, a window that scrolls, and icons with no box
+
+**Changed:** `recovery_gui.py`, `btcrecover/test/test_recovery_gui.py`
+
+All from using the built program rather than reading it.
+
+**Pasting still did not work**, menu or no menu. Listing Tk's own class bindings showed why:
+`Text` binds `<Control-v>` and the virtual `<<Paste>>`, and on macOS nothing raises that
+virtual event from Command-v. A menu accelerator is a label, not a binding. `<Command-v>`
+is bound explicitly now, along with a right-click menu on `<Button-3>`, `<Button-2>` and
+`<Control-Button-1>`, since which of those is "right-click" depends on the platform.
+
+**Four letters finish a word.** BIP39 chooses its wordlist so the first four letters
+identify one — checked against the list rather than taken on trust: 2048 words, 2048
+distinct four-letter prefixes, and 103 words shorter than four letters which are already
+whole. Typing `aban` and pressing space gives `abandon`; `ac` and `wor` are left alone
+because several words start with them. Unlike the substitution this fixes, it happens in
+front of the person, on the key they were pressing anyway, and the checksum is rechecked
+immediately.
+
+**The last screen was cut off** — it carries the passphrase, five steps, and the run log,
+and a fixed window simply lost the bottom of it with no sign there was more. The content
+scrolls now, and the scrollbar appears only when a screen does not fit. The first attempt
+at the wheel asked whether the scrollbar was on screen, which is packed and unpacked as
+screens change: scrolling worked only with the pointer over the bar. It asks the viewport
+whether it can move instead.
+
+**The icons sat on a visible square in dark mode.** A `tk.Canvas` has to be painted some
+colour and there is no colour that matches — on macOS the interior of a LabelFrame is not
+the window background. They are drawn into a transparent `PhotoImage` now, so whatever the
+theme puts behind them shows through without anyone having to know what colour it is. That
+is the third approach: a Unicode glyph was an empty box on Windows, a canvas was a visible
+box on macOS.
+
+**A miss offers another seed phrase.** Someone with several can reach for the wrong one, and
+"not found" looks identical either way. The resume point resets, since it counts candidates
+rather than phrases and a finished run leaves it at the end.
+
+---
+
 ## 2026-08-22 — Check the seed phrase before spending days on it, and paste it in the first place
 
 **Changed:** `recovery_gui.py`, `btcrecover/test/test_recovery_gui.py`

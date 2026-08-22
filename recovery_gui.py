@@ -113,6 +113,29 @@ def unknown_seed_words(mnemonic, language="en"):
 SEED_LENGTHS = (12, 15, 18, 21, 24)
 
 
+def complete_seed_word(prefix, language="en"):
+    """The one BIP39 word starting with `prefix`, or None if it is not one word.
+
+    BIP39 chooses its wordlist so that the first four letters identify a word -- checked
+    against the list here rather than taken on trust: 2048 words, 2048 distinct four-letter
+    prefixes. A hundred and three words are shorter than that and are already complete.
+
+    So four letters is enough to type. That matters more than it sounds: the alternative is
+    twenty-four words spelled out by hand, and one wrong letter is a search that runs to the
+    end and finds nothing.
+    """
+    prefix = (prefix or "").lower()
+    if len(prefix) < 2:
+        return None
+    words = seed_wordlist(language)
+    if not words:
+        return None
+    if prefix in words:
+        return None                    # already a word; leave it alone
+    matches = [w for w in words if w.startswith(prefix)]
+    return matches[0] if len(matches) == 1 else None
+
+
 def check_mnemonic(mnemonic, language="en"):
     """Is this a well-formed BIP39 seed phrase? Returns (state, message).
 
@@ -178,8 +201,8 @@ class RecoveryApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("패스프레이즈 복구")
-        self.geometry("720x560")
-        self.minsize(640, 520)
+        self.geometry("760x680")
+        self.minsize(660, 480)
 
         self._install_palette()
         self._install_fonts()
@@ -194,10 +217,68 @@ class RecoveryApp(tk.Tk):
         self.selftest_result = None
         self.started_at = None
 
-        container = ttk.Frame(self, padding=PAD)
-        container.pack(fill="both", expand=True)
+        # Screens vary a lot in height -- the last one carries the passphrase, five steps of
+        # what to do next, and the run log -- so a fixed window cut the bottom off and gave
+        # no sign there was more. The content scrolls, and the scrollbar only appears when
+        # there is something below the fold.
+        outer = ttk.Frame(self)
+        outer.pack(fill="both", expand=True)
+        self._viewport = tk.Canvas(outer, highlightthickness=0, borderwidth=0)
+        self._scroll = ttk.Scrollbar(outer, orient="vertical",
+                                     command=self._viewport.yview)
+        self._viewport.configure(yscrollcommand=self._on_scroll_range)
+        self._viewport.pack(side="left", fill="both", expand=True)
+
+        container = ttk.Frame(self._viewport, padding=PAD)
+        self._window = self._viewport.create_window((0, 0), window=container, anchor="nw")
+        container.bind("<Configure>", self._content_resized)
+        self._viewport.bind("<Configure>", self._viewport_resized)
+        self.bind_all("<MouseWheel>", self._wheel)
+        self.bind_all("<Button-4>", self._wheel)
+        self.bind_all("<Button-5>", self._wheel)
+
         self.container = container
         self.show_checks()
+
+    # ---- scrolling -------------------------------------------------------
+
+    def _content_resized(self, _event=None):
+        self._viewport.configure(scrollregion=self._viewport.bbox("all"))
+
+    def _viewport_resized(self, event):
+        # the content is as wide as the window, so text wraps to it rather than to itself
+        self._viewport.itemconfigure(self._window, width=event.width)
+
+    def _on_scroll_range(self, first, last):
+        """Show the scrollbar only when the screen does not fit.
+
+        A bar that is always there says every screen might be hiding something. One that
+        appears only when it is says which ones are.
+        """
+        if float(first) <= 0.0 and float(last) >= 1.0:
+            self._scroll.pack_forget()
+        elif not self._scroll.winfo_ismapped():
+            self._scroll.pack(side="right", fill="y")
+        self._scroll.set(first, last)
+
+    def _wheel(self, event):
+        """Scroll from anywhere in the window, not only over the bar.
+
+        Asking the viewport whether it can scroll, rather than asking whether the scrollbar
+        happens to be on screen: the bar is packed and unpacked as screens change, and a
+        wheel event arriving in that gap did nothing at all.
+
+        Text widgets scroll themselves and keep the event, which is right -- the run log has
+        its own bar. Everywhere else it moves the page.
+        """
+        first, last = self._viewport.yview()
+        if first <= 0.0 and last >= 1.0:
+            return                     # the whole screen fits; nothing to move
+        up = getattr(event, "num", None) == 4 or getattr(event, "delta", 0) > 0
+        amount = abs(getattr(event, "delta", 0)) or 1
+        step = max(1, min(5, int(amount / 40) or 1))
+        self._viewport.yview_scroll(-step if up else step, "units")
+        return "break"
 
     def _install_menu(self):
         """An Edit menu, which is what makes Cmd+V work at all.
@@ -293,34 +374,61 @@ class RecoveryApp(tk.Tk):
         self.alarm.configure(size=15, weight="bold")
 
     def _icon(self, parent, kind, size=28):
-        """A warning triangle or an all-clear tick, drawn rather than typed.
+        """A warning triangle or an all-clear tick, drawn into a transparent image.
 
-        A Unicode glyph would be one line, but whether it arrives as a symbol or as an
-        empty box depends on which fonts the customer's Windows happens to have. Drawing
-        it means it looks the same on every machine, which for the one warning that
-        matters most is worth the extra lines.
+        Two earlier attempts were wrong in different ways. A Unicode glyph renders as an
+        empty box on a Windows without the font. A tk.Canvas has to be painted some colour,
+        and there is no colour that matches: on macOS the interior of a LabelFrame is not
+        the window background, so the canvas showed up as a visible square sitting behind
+        the icon.
+
+        A PhotoImage starts fully transparent and only the pixels drawn are opaque, so
+        whatever the theme puts behind it shows through -- light, dark, panel or window,
+        without asking what colour any of them are.
         """
-        try:
-            background = ttk.Style().lookup("TLabelframe", "background") or None
-        except tk.TclError:
-            background = None
-        canvas = tk.Canvas(parent, width=size, height=size, highlightthickness=0,
-                           borderwidth=0, background=background or self.cget("background"))
-        pad, mid = size * 0.08, size / 2.0
+        image = tk.PhotoImage(width=size, height=size)
+        mid = size / 2.0
+
         if kind == "warn":
-            canvas.create_polygon(mid, pad, size - pad, size - pad * 1.6, pad, size - pad * 1.6,
-                                  fill="#dc2626", outline="#991b1b", width=1)
-            canvas.create_line(mid, size * 0.34, mid, size * 0.63,
-                               fill="white", width=max(2, int(size * 0.10)), capstyle="round")
-            canvas.create_oval(mid - size * 0.055, size * 0.71, mid + size * 0.055, size * 0.82,
-                               fill="white", outline="")
+            body, edge = "#dc2626", "#991b1b"
+            top, bottom = size * 0.10, size * 0.90
+            for y in range(int(top), int(bottom) + 1):
+                # widen from the apex to the base
+                half = (y - top) / (bottom - top) * (mid - size * 0.08)
+                x1, x2 = int(mid - half), int(mid + half)
+                if x2 <= x1:
+                    continue
+                image.put(edge, to=(x1, y, x2 + 1, y + 1))
+                if x2 - x1 > 2:
+                    image.put(body, to=(x1 + 1, y, x2, y + 1))
+            bar = max(1, int(size * 0.09))
+            image.put("#ffffff", to=(int(mid - bar / 2), int(size * 0.36),
+                                     int(mid + bar / 2) + 1, int(size * 0.66)))
+            image.put("#ffffff", to=(int(mid - bar / 2), int(size * 0.72),
+                                     int(mid + bar / 2) + 1, int(size * 0.80)))
         else:
-            canvas.create_oval(pad, pad, size - pad, size - pad,
-                               fill="#16a34a", outline="#15803d", width=1)
-            canvas.create_line(size * 0.28, mid, size * 0.44, size * 0.66, size * 0.73, size * 0.34,
-                               fill="white", width=max(2, int(size * 0.11)),
-                               capstyle="round", joinstyle="round")
-        return canvas
+            body, edge = "#16a34a", "#15803d"
+            radius = mid - size * 0.06
+            for y in range(size):
+                dy = y + 0.5 - mid
+                if abs(dy) > radius:
+                    continue
+                half = (radius * radius - dy * dy) ** 0.5
+                x1, x2 = int(mid - half), int(mid + half)
+                image.put(edge if abs(dy) > radius - 1.5 else body, to=(x1, y, x2 + 1, y + 1))
+            thick = max(1, int(size * 0.10))
+            for a, b in (((0.30, 0.52), (0.45, 0.68)), ((0.45, 0.68), (0.72, 0.34))):
+                steps = int(size)
+                for i in range(steps + 1):
+                    t = i / steps
+                    x = (a[0] + (b[0] - a[0]) * t) * size
+                    y = (a[1] + (b[1] - a[1]) * t) * size
+                    image.put("#ffffff", to=(int(x - thick / 2), int(y - thick / 2),
+                                             int(x + thick / 2) + 1, int(y + thick / 2) + 1))
+
+        label = ttk.Label(parent, image=image)
+        label.image = image           # PhotoImage is collected the moment nothing holds it
+        return label
 
     # ---- screen plumbing -------------------------------------------------
 
@@ -572,8 +680,13 @@ class RecoveryApp(tk.Tk):
         self.seed_status = ttk.Label(status, text="", font=self.bold)
         self.seed_status.pack(side="left")
         self.mnemonic_text.bind("<KeyRelease>", self._count_words)
+        # Four letters is enough; finish the word when they reach for the space bar.
+        self.mnemonic_text.bind("<space>", self._complete_word)
+        self._attach_edit_bindings(self.mnemonic_text)
         ttk.Label(self.container, foreground=self.c["dim"], wraplength=640, justify="left",
-                  text="붙여넣기로 입력하셨다면 클립보드에 시드 문구가 그대로 남아 있습니다. "
+                  text="단어는 앞 4글자만 치고 스페이스를 누르면 나머지가 채워집니다. "
+                       "BIP39 단어는 앞 4글자가 서로 겹치지 않습니다.\n"
+                       "붙여넣기로 입력하셨다면 클립보드에 시드 문구가 그대로 남아 있습니다. "
                        "위 버튼으로 비울 수 있지만, 클립보드 기록을 따로 저장하는 프로그램이나 "
                        "다른 애플 기기로 이미 복사된 것까지는 지우지 못합니다."
                   ).pack(anchor="w", pady=(6, 0))
@@ -651,6 +764,68 @@ class RecoveryApp(tk.Tk):
         # kept so _render_gate's callers have something to call; the decision moved to
         # start_search, where the seed phrase is actually about to be used
         return
+
+    def _complete_word(self, _event=None):
+        """Finish the word being typed, if four letters have already decided which.
+
+        Done in front of them, on the key they were pressing anyway, and the phrase is
+        checked again straight after -- so an expansion that is not what they meant is
+        visible immediately rather than discovered days later. This is the opposite of what
+        btcrecover does with a word it does not recognise, which is to substitute silently
+        and mention it in a log.
+        """
+        text = self.mnemonic_text
+        typed = text.get("1.0", "insert").split()
+        if typed:
+            language = (self.config_data or {}).get("wallet", {}).get("language")
+            whole = complete_seed_word(typed[-1], language)
+            if whole:
+                text.delete("insert-{}c".format(len(typed[-1])), "insert")
+                text.insert("insert", whole)
+        text.insert("insert", " ")
+        self._count_words()
+        return "break"
+
+    def _attach_edit_bindings(self, widget):
+        """Make Cmd+V and right-click work, because neither does on its own.
+
+        Tk's Text class binds <Control-v> and the virtual <<Paste>>, and on macOS nothing
+        raises that virtual event from Command-v -- checked by listing the class bindings.
+        So the shortcut everyone reaches for did nothing in the one field where typing by
+        hand is worst: twenty-four words, each a chance to get one wrong.
+
+        The menu bar alone was not enough either; its accelerators are labels, not
+        bindings. These are the bindings.
+        """
+        for sequence, event in (("<Command-v>", "<<Paste>>"), ("<Command-V>", "<<Paste>>"),
+                                ("<Command-c>", "<<Copy>>"), ("<Command-C>", "<<Copy>>"),
+                                ("<Command-x>", "<<Cut>>"), ("<Command-X>", "<<Cut>>")):
+            widget.bind(sequence,
+                        lambda e, ev=event: (e.widget.event_generate(ev), "break")[1])
+        widget.bind("<Command-a>", lambda e: (self._select_all(), "break")[1])
+        widget.bind("<Command-A>", lambda e: (self._select_all(), "break")[1])
+
+        menu = tk.Menu(widget, tearoff=0)
+        for label, event in (("붙여넣기", "<<Paste>>"), ("복사", "<<Copy>>"),
+                             ("잘라내기", "<<Cut>>")):
+            menu.add_command(label=label,
+                             command=lambda ev=event, w=widget: (w.event_generate(ev),
+                                                                 self._count_words_if_open()))
+        menu.add_separator()
+        menu.add_command(label="전체 선택", command=self._select_all)
+
+        def popup(event):
+            widget.focus_set()
+            try:
+                menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                menu.grab_release()
+            return "break"
+
+        # which button "right-click" is depends on the platform and the Tk build, and
+        # Control-click is how a one-button Mac has always done it
+        for sequence in ("<Button-3>", "<Button-2>", "<Control-Button-1>"):
+            widget.bind(sequence, popup)
 
     def _clear_clipboard(self):
         """Empty the clipboard, then check that it is actually empty and say which.
@@ -924,6 +1099,13 @@ class RecoveryApp(tk.Tk):
         nav = ttk.Frame(self.container)
         nav.pack(side="bottom", fill="x", pady=(12, 0))
         ttk.Button(nav, text="처음으로", command=self.show_checks).pack(side="left")
+        if not result.found:
+            # Someone with several seed phrases can easily have reached for the wrong one,
+            # and "not found" looks the same either way. Sending them back to the start
+            # would mean opening the config file again to change one field they may not
+            # have got wrong.
+            ttk.Button(nav, text="다른 시드 문구로 다시",
+                       command=self._retry_other_seed).pack(side="left", padx=(8, 0))
         ttk.Button(nav, text="닫기", command=self.destroy).pack(side="right")
 
 
@@ -945,6 +1127,18 @@ class RecoveryApp(tk.Tk):
                 continue
             kept.append(line)
         return "\n".join(kept).strip()
+
+    def _retry_other_seed(self):
+        """Back to the seed field, with the search position reset.
+
+        The resume point counts candidates, not seed phrases: a finished run leaves it at
+        the end, and carrying it over to a different phrase would search nothing at all and
+        report the same "not found" in a second. Starting a different phrase is a new
+        search, so it starts at the beginning.
+        """
+        self.skip = 0
+        self.result = None
+        self.show_mnemonic()
 
     def _miss_text(self):
         """What "not found" means, which is different when only a part was searched.

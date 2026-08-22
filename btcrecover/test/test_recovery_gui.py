@@ -352,6 +352,126 @@ class Screens(unittest.TestCase):
         self.assertEqual(recovery_gui.check_mnemonic("")[0], "empty")
         self.assertEqual(recovery_gui.check_mnemonic(MNEMONIC.upper())[0], "ok")
 
+    def test_the_wheel_scrolls_from_anywhere_not_only_over_the_bar(self):
+        """The first version asked whether the scrollbar was on screen.
+
+        It is packed and unpacked as screens change, and a wheel event arriving while it was
+        not there did nothing -- so scrolling appeared to work only when the pointer was
+        over the bar itself. Ask the viewport whether it can move instead.
+        """
+        self.app.geometry("760x400")
+        self.app.update_idletasks()
+        self._load()
+        self.app.show_mnemonic()
+        self.app.update_idletasks()
+        try:
+            if self.app._viewport.yview()[1] >= 1.0:
+                self.skipTest("this screen fits; nothing to scroll")
+            before = self.app._viewport.yview()[0]
+            self.app.container.event_generate("<MouseWheel>", delta=-120, x=10, y=10)
+            self.app.update()
+            self.assertGreater(self.app._viewport.yview()[0], before,
+                               "the wheel did nothing away from the scrollbar")
+        finally:
+            self.app.geometry("760x680")
+            self.app.update_idletasks()
+
+    def test_the_scrollbar_only_appears_when_it_is_needed(self):
+        # a bar that is always there says every screen might be hiding something
+        source = read_source()
+        self.assertIn("pack_forget", source)
+        self.assertIn("def _on_scroll_range", source)
+
+    def test_a_miss_offers_another_seed_phrase(self):
+        """Someone with several seed phrases can reach for the wrong one.
+
+        "Not found" looks identical whether the passphrase was outside the range or the
+        phrase was the wrong wallet's, and sending them back to the first screen would mean
+        opening the config file again to change a field they may not have got wrong.
+        """
+        cfg = json.loads(json.dumps(CONFIG))
+        cfg["passphrase"]["slots"][1] = {"type": "digits", "candidates": ["0001"]}
+        self.app.config_data = cfg
+        self.app.plan = embed.SearchPlan(cfg)
+        self.app.config_path = self.config_path
+        self.app.show_mnemonic()
+        self.app.mnemonic_text.insert("1.0", MNEMONIC)
+        self.app.start_search()
+        self._wait_for_result()
+        self.assertFalse(self.app.result.found)
+        self.assertIn("다른 시드 문구로 다시", self._all_text())
+
+    def test_trying_another_seed_starts_from_the_beginning(self):
+        # the resume point counts candidates, not phrases: carried over from a finished run
+        # it would search nothing and report the same miss in a second
+        self.app.skip = 999
+        self.app.result = object()
+        self.app._retry_other_seed()
+        self.assertEqual(self.app.skip, 0)
+        self.assertIsNone(self.app.result)
+        self.assertIn("시드 문구 입력", self._all_text())
+
+    def test_a_success_does_not_offer_it(self):
+        self._load()
+        self.app.show_mnemonic()
+        self.app.mnemonic_text.insert("1.0", MNEMONIC)
+        self.app.start_search()
+        self._wait_for_result()
+        self.assertTrue(self.app.result.found)
+        self.assertNotIn("다른 시드 문구로 다시", self._all_text())
+
+    def test_four_letters_finish_the_word(self):
+        """BIP39 picks its words so the first four letters identify one.
+
+        Verified against the list rather than taken on trust -- 2048 words, 2048 distinct
+        four-letter prefixes -- which is what makes finishing them safe. The alternative is
+        twenty-four words spelled out by hand, where one wrong letter is a search that runs
+        to the end and finds nothing.
+        """
+        self._load()
+        self.app.show_mnemonic()
+        for token in ["aban"] * 11 + ["abou"]:
+            self.app.mnemonic_text.insert("insert", token)
+            self.app._complete_word()
+        self.assertEqual(self.app.mnemonic_text.get("1.0", "end").split(), MNEMONIC.split())
+        self.assertEqual(self.app.seed_state, "ok")
+
+    def test_the_prefixes_really_are_unique(self):
+        words = recovery_gui.seed_wordlist("en")
+        self.assertEqual(len(words), 2048)
+        self.assertEqual(len({w[:4] for w in words}), len(words))
+
+    def test_it_only_finishes_a_word_it_is_sure_about(self):
+        for prefix, expected in (("aban", "abandon"), ("abi", "ability"),
+                                 ("vint", "vintage")):
+            with self.subTest(prefix):
+                self.assertEqual(recovery_gui.complete_seed_word(prefix), expected)
+        for prefix in ("ac", "wor",          # several words start with these
+                       "abandon", "zoo",     # already whole
+                       "reble", "x", "q"):   # start nothing
+            with self.subTest(prefix):
+                self.assertIsNone(recovery_gui.complete_seed_word(prefix))
+
+    def test_the_edit_shortcuts_are_bound_to_the_field(self):
+        # Tk's Text class binds <Control-v> and nothing raises <<Paste>> from Command-v on
+        # macOS, so the shortcut everyone reaches for did nothing. Tk normalises the
+        # sequence to <Mod1-Key-v>, which is what to look for.
+        self._load()
+        self.app.show_mnemonic()
+        bound = set(self.app.mnemonic_text.bind())
+        self.assertIn("<Mod1-Key-v>", bound)
+        for button in ("<Button-3>", "<Button-2>", "<Control-Button-1>"):
+            self.assertIn(button, bound, "right-click has no menu on some platform")
+
+    def test_the_icons_have_no_background_to_mismatch(self):
+        # a tk.Canvas has to be painted some colour, and on macOS the inside of a
+        # LabelFrame is not the window background, so the icon sat on a visible square
+        icon = self.app._icon(self.app, "warn", 30)
+        self.assertTrue(icon.image.transparency_get(0, 0), "the corner is not transparent")
+        self.assertFalse(icon.image.transparency_get(15, 20), "nothing was drawn")
+        body = read_source().split("def _icon")[1].split("\n    def ")[0]
+        self.assertNotIn("tk.Canvas(", body, "an icon is painted on a canvas again")
+
     def test_the_clipboard_can_be_emptied_and_says_whether_it_was(self):
         """A pasted seed phrase is still in the clipboard afterwards.
 
