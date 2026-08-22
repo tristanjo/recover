@@ -17,6 +17,26 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
+## 2026-08-22 — Count the pool without building it
+
+**Changed:** `webapp/diagnostic.html`
+
+Asked whether a search running into the hundreds of millions would bog the page down. It
+does not: `count()` multiplies over blocks and never builds a candidate, so six billion
+costs 0.1 ms and 8×10¹⁷ costs the same.
+
+The instinct came from btcrecover, where it is true — it counts by generating, which took
+0.9 s for 1,111,110 candidates and 59 s for the 29,130,011 that one typo option turns them
+into. That is why `embed` passes `--no-eta`: the count is already known, and half an hour
+spent deciding how long a billion-candidate search will take is half an hour not searching.
+Confirmed that the counting pass never runs.
+
+One part of the page did scale with content. The pool slot built every subset in order to
+count them — sixteen words is 65,535 of them, 28 ms on every keystroke. It sums binomials
+now and keeps two subsets for sampling characters: 0.8 ms.
+
+---
+
 ## 2026-08-22 — Three more ways an ordinary person's memory differs from the wallet
 
 **Changed:** `btcrecover/passphrase_grammar.py`, `btcrecover/embed.py`, `webapp/diagnostic.html`

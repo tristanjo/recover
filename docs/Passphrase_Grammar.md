@@ -157,6 +157,31 @@ remembers `비밀번호2024`:
 | without the option | 20,000 | exhausted, not found |
 | with it | 40,000 | **found at candidate 324**, 0.5s |
 
+## Counting is arithmetic, not enumeration
+
+`count()` multiplies over blocks; it never builds a candidate. That is not a detail — it is
+the difference between an estimate a web page can update on every keystroke and one it
+cannot show at all.
+
+btcrecover counts by generating. Measured over the same 1,111,110 candidates:
+
+| | counting 1,111,110 |
+|---|---|
+| `PassphraseGrammar.count()` | **6.6 ms** |
+| btcrecover, generating them | 0.9 s |
+| btcrecover, the same with one typo enabled (29,130,011) | 59 s |
+
+At a billion candidates btcrecover would spend half an hour deciding how long the search
+will take. `embed` therefore passes `--no-eta`: the count is already known exactly, and a
+pass over the whole space to draw a progress bar is not worth it. The recovery window shows
+progress against the grammar's own number instead.
+
+The same property is what lets `webapp/diagnostic.html` stay responsive. A six-billion
+candidate grammar costs it 0.1 ms, and an 8×10¹⁷ one costs the same, because neither is
+enumerated. The only part that ever scaled with content was the pool slot, which built its
+subsets to count them — sixteen words meant 65,535 of them on every keystroke, 28 ms. It
+sums binomials now, and keeps two subsets for sampling characters.
+
 ## Typos
 
 The grammar says what the passphrase was built from. Typos say the owner might not have
