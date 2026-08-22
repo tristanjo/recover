@@ -5,9 +5,15 @@ owner can still remember about it: a couple of words, roughly how many digits fo
 maybe a symbol. A **grammar** describes that space in a few hundred bytes and expands it
 into candidates on demand.
 
-`webapp/diagnostic.html` writes these grammars; `btcrecover.passphrase_grammar` expands
+The diagnostic page writes these grammars; `btcrecover.passphrase_grammar` expands
 them. Both count candidates the same way, so the estimate the owner is shown is the
 search that actually runs.
+
+That page is not in this repository — it is the service rather than the tool, and it lives
+in its own. It carries copies of things defined here: the Hangul keystroke tables, the
+address-to-derivation-path rules, and the measured cost model behind its time estimate. Its
+own tests read this checkout and fail if any of them have drifted, which is the only thing
+standing between a customer and a quoted search that is not the one that runs.
 
 ## Use the passphrase-search path, not the seed-search path
 
@@ -139,7 +145,7 @@ Korean most likely did type Korean, and this is the fallback for when they did n
 the option can be left on for an English passphrase without widening the search at all.
 
 Standard 두벌식, which is what an unmodified Korean Windows or macOS types. The tables live
-in `btcrecover/hangul_keys.py`, and `webapp/diagnostic.html` carries a copy generated from
+in `btcrecover/hangul_keys.py`, and the diagnostic page carries a copy generated from
 them — `btcrecover/test/test_hangul_keys.py` holds the vectors both must satisfy, because a
 page that quotes one search while the program runs another is worse than no page.
 
@@ -176,7 +182,7 @@ will take. `embed` therefore passes `--no-eta`: the count is already known exact
 pass over the whole space to draw a progress bar is not worth it. The recovery window shows
 progress against the grammar's own number instead.
 
-The same property is what lets `webapp/diagnostic.html` stay responsive. A six-billion
+The same property is what lets the diagnostic page stay responsive. A six-billion
 candidate grammar costs it 0.1 ms, and an 8×10¹⁷ one costs the same, because neither is
 enumerated. The only part that ever scaled with content was the pool slot, which built its
 subsets to count them — sixteen words meant 65,535 of them on every keystroke, 28 ms. It
@@ -532,5 +538,5 @@ python -m unittest btcrecover.test.test_passphrase_grammar
 ```
 
 `count()` is checked against exhaustive generation for every shape of grammar, and
-against the numbers `webapp/diagnostic.html` arrives at independently — if those two ever
+against the numbers the diagnostic page arrives at independently — if those two ever
 drift, the quoted estimate stops describing the real search.

@@ -24,7 +24,7 @@ quotes the customer a candidate count and an ETA, and this expander later produc
 the candidates that get searched. If the two disagree, the quote was a lie.
 
 So these tests pin down three things: that count() is exactly what generate() yields,
-that the numbers match the ones webapp/diagnostic.html arrives at independently, and
+that the numbers match the ones the diagnostic page arrives at independently, and
 that the order is stable enough for an interrupted search to resume.
 """
 
@@ -204,7 +204,7 @@ class StrayWhitespace(unittest.TestCase):
 
 
 class WebToolAgreement(unittest.TestCase):
-    """The same grammars, counted independently by webapp/diagnostic.html.
+    """The same grammars, counted independently by the diagnostic page.
 
     These expectations were read off the web tool, not computed here; they are what a
     customer would have been quoted. If this test fails, one of the two implementations

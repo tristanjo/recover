@@ -31,3 +31,6 @@ docs/Benchmarks.md
 # PyInstaller output; the recipe (recovery_gui.spec) is tracked, the results are not
 build/
 dist/
+
+# macOS finder droppings -- these got committed once by a careless `git add -A`
+.DS_Store

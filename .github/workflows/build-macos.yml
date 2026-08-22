@@ -87,7 +87,6 @@ jobs:
           python -m unittest btcrecover.test.test_hangul_keys
           python -m unittest btcrecover.test.test_embed
           python -m unittest btcrecover.test.test_recovery_gui
-          python -m unittest btcrecover.test.test_webapp_model
 
       - name: Work out the version and anchor the build clock to the commit
         run: |

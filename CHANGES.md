@@ -55,6 +55,38 @@ win rather than the second one failing.
 
 ---
 
+## 2026-08-22 — Move the diagnostic page out of this repository
+
+**Changed:** removed `webapp/` and `btcrecover/test/test_webapp_model.py`;
+`.github/workflows/build-*.yml`, `docs/Passphrase_Grammar.md`, `.gitignore`
+
+The page is the paid service; this fork is the tool it drives. The tool is GPL and public
+because it must be. The page now lives in its own private repository, and deployment stops
+being coupled to pushing the program.
+
+It is worth being plain that this hides nothing about the page. It is entirely client-side,
+so every visitor downloads its complete source — that is not a leak, it is how it works, and
+it is what lets a customer confirm nothing is sent anywhere. What the split buys is that the
+service's own work is not filed inside the GPL fork.
+
+The cross-checks move with it rather than dying. They are the reason that test exists: the
+page's address rules against `btcrseed`'s own classifier, its cost model against measurements
+of this program, its post-recovery advice against `recovery_gui`'s. They now find this
+checkout beside theirs, or at `BTCRECOVER_PATH`, and skip loudly when it is absent instead of
+passing quietly.
+
+While doing this, three things surfaced that a careless `git add -A` had swept into the
+previous commit without anyone looking: `webapp/index.html` deleted (it was missing from the
+working tree), and `webapp/.DS_Store` and a 57 KB `token_gen.html` added. The first is
+restored, the second is now ignored, and the third was a reference file that had no business
+being in a deploy directory.
+
+Also corrected: an earlier report that the removed `webapp/아카이브.zip` was still being
+served. It was not. That site answers **every** unknown path with 200 and the page itself, so
+a status code alone says nothing — the response was HTML, not a zip.
+
+---
+
 ## 2026-08-22 — Say what happens after recovery before anyone starts
 
 **Changed:** `webapp/diagnostic.html`, `btcrecover/test/test_webapp_model.py`

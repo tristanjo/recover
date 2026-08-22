@@ -19,9 +19,12 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see http://www.gnu.org/licenses/
 
-"""These vectors are the contract. webapp/diagnostic.html carries the same tables,
-generated from this module, and must produce the same answers -- a page that quotes a
-customer one search while the program runs another is worse than no page at all.
+"""These vectors are the contract. The diagnostic page carries the same tables, generated
+from this module, and must produce the same answers -- a page that quotes a customer one
+search while the program runs another is worse than no page at all.
+
+The page lives in its own repository now (see docs/Passphrase_Grammar.md); its own tests
+check it against this one.
 """
 
 import os, sys, unittest
