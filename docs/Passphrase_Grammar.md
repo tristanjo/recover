@@ -182,6 +182,33 @@ enumerated. The only part that ever scaled with content was the pool slot, which
 subsets to count them — sixteen words meant 65,535 of them on every keystroke, 28 ms. It
 sums binomials now, and keeps two subsets for sampling characters.
 
+## Why both --no-eta and --no-dupchecks
+
+`embed` passes both, and each is a decision worth stating.
+
+**`--no-eta`** skips btcrecover's counting pass, which counts by generating. The grammar
+already knows the number exactly and arithmetically, so the pass buys nothing and costs
+everything — see above.
+
+**`--no-dupchecks`** is a real trade, not a free win. With no typo options the grammar
+produces no duplicates at all, so it changes nothing: the same 20,002 candidates either way.
+With typos on, btcrecover's expansion does repeat itself, and checking would cut the work by
+about 29% — 5,094,989 candidates against 7,138,666.
+
+The reason not to take that is what the checking costs, which is roughly a hundred bytes per
+distinct candidate and grows with the search:
+
+| expanded candidates | peak memory with duplicate checking |
+|---|---|
+| 606,387 | 100 MB |
+| 5,094,989 | 580 MB |
+| 20,295,122 | 2,110 MB |
+
+A hundred million candidates would need ten gigabytes, and a billion a hundred. The searches
+where 29% is worth having are exactly the ones where the memory is not available, and a
+recovery that dies of exhaustion partway through is worse than one that takes a third longer.
+So it stays off, on a customer machine whose memory nobody has measured.
+
 ## Typos
 
 The grammar says what the passphrase was built from. Typos say the owner might not have

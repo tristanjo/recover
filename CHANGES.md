@@ -17,6 +17,25 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
+## 2026-08-22 — Write down why --no-dupchecks is the default
+
+**Changed:** `docs/Passphrase_Grammar.md`
+
+Both `--no-eta` and `--no-dupchecks` were already passed, but only the first had a reason
+recorded. Measured the second rather than leaving it as habit.
+
+With no typo options it changes nothing — the grammar produces no duplicates, so the same
+20,002 candidates either way. With typos on, duplicate checking would cut the work by about
+29%: 5,094,989 candidates against 7,138,666. What it costs is around a hundred bytes per
+distinct candidate, and it grows with the search — 100 MB at 600,000 candidates, 580 MB at
+five million, 2.1 GB at twenty million. A hundred million would need ten gigabytes.
+
+So the searches where 29% is worth having are the ones where the memory is not there, and a
+recovery that dies partway through is worse than one that takes a third longer. It stays off,
+and the reasoning is now in the docs rather than in someone's head.
+
+---
+
 ## 2026-08-22 — Count the pool without building it
 
 **Changed:** `webapp/diagnostic.html`
