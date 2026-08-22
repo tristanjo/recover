@@ -99,6 +99,35 @@ a wallet whose seed never touched a computer, whether the old seed leaked stops 
 
 ---
 
+# For the maintainer: when to do this
+
+**Deferred until the service actually launches.** Both platforms are wired for signing and
+both skip it cleanly without secrets, so builds keep working, self-testing and publishing a
+hash in the meantime — and say plainly, in the run log and in the release notes, that they
+are unsigned.
+
+That is the right order, because signing is not the first domino:
+
+1. **사업자등록.** Windows signing has no individual path from Korea — organization
+   validation only — so it needs the registered business entity. macOS does not care either
+   way, but an individual Apple enrolment puts a personal name on every customer's
+   Gatekeeper prompt, which is a decision worth making once rather than twice.
+2. **A custom domain.** Azure organization validation wants a website on a domain the entity
+   owns and a monitored mailbox on that same domain. `paph.pages.dev` will not pass. This is
+   the item that most often turns out to be the blocker.
+3. **Then signing.** Azure validation takes 1–20 business days; Apple enrolment usually
+   lands within a day or two. Start Azure first.
+
+Roughly $220 a year between them — Apple at $99, Azure Artifact Signing at $9.99 a month —
+plus a paid Azure subscription, since free and trial subscriptions are refused.
+
+Until then the honest position is the one already on screen: the download can be checked
+against a published hash and built from public source, the operating system cannot identify
+who published it and says so, and neither of those is what protects the customer. Moving the
+funds is.
+
+---
+
 # For the maintainer: turning on macOS signing
 
 Six repository secrets switch the signing and notarising steps on. Until all six exist the
