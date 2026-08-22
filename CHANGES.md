@@ -63,6 +63,37 @@ win rather than the second one failing.
 
 ---
 
+## 2026-08-22 — A way to say thanks, kept away from the moment that matters
+
+**Changed:** `recovery_gui.py`, `README.md`
+
+The success screen is the wrong place for a QR code, and it is worth being precise about
+why. That screen has just told someone to send everything they own to a new address, and to
+check that address on their hardware wallet's screen before they do. A scannable "send here"
+code beside those instructions is the exact shape of the attack that warning exists for, and
+a mis-scan there is irreversible. It is also, in the moment someone is most grateful and
+least critical, a program that has just seen their seed phrase asking them for money.
+
+So: no QR in the program, text only, behind a button that has to be pressed, at the bottom
+of everything else, after the steps that get the funds to safety. The diagnostic page has
+the QR instead — there is no seed phrase on that page and nothing about it is urgent.
+
+The same address is in this README so it can be compared against something outside the
+program, which is the only real answer to "is this address really theirs".
+
+**Upstream's donation addresses are untouched.** Rewriting them under text asking people to
+thank the original authors would be taking money meant for someone else -- not a licensing
+question. What the GPL does require is all still here: the licence, the fork notice, the
+change log, the per-file notices, and the licence shipped inside the build.
+
+The address was checked before being written into anything: 42 characters, decodes as
+witness version 0 with a 20-byte program, and rejects a single-character change. The QR is
+generated at build time as inline SVG and its rects were rebuilt back into a matrix and
+compared with the encoder's own — so what is drawn is what was encoded. Nobody has scanned
+it with a phone yet, which is the one check this machine cannot do.
+
+---
+
 ## 2026-08-22 — Four letters per word, a window that scrolls, and icons with no box
 
 **Changed:** `recovery_gui.py`, `btcrecover/test/test_recovery_gui.py`

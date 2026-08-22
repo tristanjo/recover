@@ -112,6 +112,20 @@ def unknown_seed_words(mnemonic, language="en"):
 
 SEED_LENGTHS = (12, 15, 18, 21, 24)
 
+# Shown only after the funds are safe, only when asked for, and as text rather than a QR
+# code. This screen has just told someone to send everything they own to a new address and
+# to check that address on their hardware wallet's screen before they do. A scannable
+# "send money here" code on the same screen is the exact shape of the attack that warning
+# is about, and a mis-scan at that moment is irreversible.
+#
+# The same address is in README.md, so it can be compared against something outside the
+# program. That is the only real answer to "is this address really theirs".
+#
+# Upstream's own donation addresses are left exactly as they are. Rewriting them while
+# keeping the text that asks people to thank the original author would be taking money
+# meant for someone else, which is not a licensing question.
+DONATION_ADDRESS = "bc1qpr5e6syrl39vnarnj95la7fl4sv52yu0zfq75v"
+
 
 def complete_seed_word(prefix, language="en"):
     """The one BIP39 word starting with `prefix`, or None if it is not one word.
@@ -1096,6 +1110,9 @@ class RecoveryApp(tk.Tk):
             box.configure(state="disabled")
             box.pack(fill="both", expand=True)
 
+        if result.found:
+            self._donation_note()
+
         nav = ttk.Frame(self.container)
         nav.pack(side="bottom", fill="x", pady=(12, 0))
         ttk.Button(nav, text="처음으로", command=self.show_checks).pack(side="left")
@@ -1127,6 +1144,44 @@ class RecoveryApp(tk.Tk):
                 continue
             kept.append(line)
         return "\n".join(kept).strip()
+
+    def _donation_note(self):
+        """Asked once, quietly, after everything that matters is said.
+
+        Nothing appears until the button is pressed: the steps above are the reason this
+        screen exists, and a second address on it while someone is about to move their
+        whole balance is worth less than the mistake it could cause.
+        """
+        box = ttk.Frame(self.container)
+        box.pack(fill="x", pady=(16, 0))
+        ttk.Separator(box, orient="horizontal").pack(fill="x", pady=(0, 10))
+        ttk.Label(box, foreground=self.c["dim"], wraplength=620, justify="left",
+                  text="도움이 되셨다면 — 자금을 모두 옮기신 뒤에, 여유가 되실 때만. "
+                       "복구와는 아무 상관이 없고, 하셔도 안 하셔도 됩니다."
+                  ).pack(anchor="w")
+
+        row = ttk.Frame(box)
+        row.pack(anchor="w", pady=(8, 0))
+        self.donate_button = ttk.Button(row, text="후원 주소 보기",
+                                        command=self._show_donation_address)
+        self.donate_button.pack(side="left")
+        self.donate_field = None
+
+    def _show_donation_address(self):
+        if self.donate_field is not None:
+            return
+        self.donate_button.state(["disabled"])
+        holder = self.donate_button.master.master
+        self.donate_field = tk.Text(holder, height=1, wrap="none", font=self.mono,
+                                    relief="flat", highlightthickness=1)
+        self.donate_field.insert("1.0", DONATION_ADDRESS)
+        self.donate_field.configure(state="disabled")
+        self.donate_field.pack(fill="x", pady=(8, 0))
+        self._attach_edit_bindings(self.donate_field)
+        ttk.Label(holder, foreground=self.c["dim"], wraplength=620, justify="left",
+                  text="같은 주소가 저장소의 README.md 에도 적혀 있습니다. "
+                       "대조해 보실 수 있습니다."
+                  ).pack(anchor="w", pady=(6, 0))
 
     def _retry_other_seed(self):
         """Back to the seed field, with the search position reset.

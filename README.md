@@ -8,6 +8,17 @@
 > listed in [CHANGES.md](CHANGES.md). Like upstream, it is free software under the
 > [GNU GPL v2 or later](LICENSE.txt): you may read, modify, and redistribute it, and you are
 > entitled to the complete source of any binary built from it.
+>
+> **Donations for this fork:** `bc1qpr5e6syrl39vnarnj95la7fl4sv52yu0zfq75v`
+>
+> The recovery window shows the same address, behind a button, after a successful recovery.
+> It is written here so it can be compared against something outside the program — which is
+> the only real answer to "is this address really theirs". Nothing about a recovery depends
+> on it.
+>
+> Upstream's donation addresses in [docs/donate.md](docs/donate.md) are untouched. Rewriting
+> them under text that asks people to thank the original authors would be taking money meant
+> for someone else.
 
 *BTCRecover* is an open source wallet password and seed recovery tool.
 
