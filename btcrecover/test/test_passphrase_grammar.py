@@ -28,7 +28,7 @@ that the numbers match the ones webapp/diagnostic.html arrives at independently,
 that the order is stable enough for an interrupted search to resume.
 """
 
-import json, os, sys, tempfile, unittest
+import json, os, sys, tempfile, time, unittest
 
 if __name__ == '__main__':
     sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -382,50 +382,66 @@ class PriorityOrder(unittest.TestCase):
         self.assertEqual(sorted(g.generate()), ["{:04d}".format(i) for i in range(10000)])
 
     def test_a_second_choice_in_one_slot_beats_second_choices_in_two(self):
-        """Two slots that both span the year length, so each has a preferred tier.
+        """Two slots of the same shape, so each has the same tier ordering.
 
-        The blocks are year/year, then the two year/other pairings, then other/other.
-        Their sizes are known, so probing the boundaries is exact and instant -- no need
-        to walk four million candidates to see where the cost changes.
+        Asserted as a property rather than against tier sizes: whatever the model decides a
+        digit run is likely to be, a candidate settling for a lower tier in one slot has to
+        come before one settling in both. Pinning the boundaries to counts would mean
+        rewriting this test every time the model learns something.
         """
         g = PassphraseGrammar({"passphrase": {
             "slots": [digits(4, 4), digits(4, 4)], "separators": ["-"], "priority": True}})
-        years, others = 200, 10000 - 200
+        tiers = g.slots[0].priority_tiers()
+        self.assertGreater(len(tiers), 1, "this test needs a slot with more than one tier")
 
-        def cost_at(position):
-            left, right = next(g.generate(skip=position)).split("-")
-            return sum(0 if 1900 <= int(part) < 2100 else 1 for part in (left, right))
+        def tier_of(value):
+            index = int(value)
+            for t, ranges in enumerate(tiers):
+                if any(start <= index < stop for start, stop in ranges):
+                    return t
+            self.fail("value {} is in no tier".format(value))
 
-        self.assertEqual(cost_at(0), 0)                                        # year-year
-        self.assertEqual(cost_at(years * years - 1), 0)                        # last of them
-        self.assertEqual(cost_at(years * years), 1)                            # first year-other
-        self.assertEqual(cost_at(years * years + 2 * years * others - 1), 1)   # last of them
-        self.assertEqual(cost_at(years * years + 2 * years * others), 2)       # other-other
+        worst_so_far = -1
+        for position, candidate in enumerate(g.generate(limit=200000)):
+            left, right = candidate.split("-")
+            cost = tier_of(left) + tier_of(right)
+            self.assertGreaterEqual(cost, worst_so_far,
+                                    "cost went down again at position {}".format(position))
+            worst_so_far = max(worst_so_far, cost)
+        self.assertGreater(worst_so_far, 0, "never reached a lower tier")
 
     def test_priority_is_on_by_default(self):
         g = PassphraseGrammar({"passphrase": {"slots": [digits(4, 4)]}})
         self.assertTrue(g.priority)
         self.assertEqual(next(g.generate()), "1900")
 
+    def _assert_skip_is_instant(self, grammar, skip):
+        """The point is that nothing walks: a walk over a hundred million candidates would
+        not return, so the assertion is that it does, and lands somewhere real."""
+        started = time.monotonic()
+        candidate = next(grammar.generate(skip=skip))
+        self.assertLess(time.monotonic() - started, 5.0, "skipping walked instead of dividing")
+        return candidate
+
     def test_skipping_deep_into_an_ordered_space_is_not_a_walk(self):
         # 222 million candidates; if this were walking the test would not finish
         g = PassphraseGrammar({"passphrase": {
             "slots": [words(["a", "b"]), digits(1, 8)], "priority": True}})
         self.assertEqual(g.count(), 222222220)
-        self.assertEqual(next(g.generate(skip=200000000)), "b77777780")
+        deep = self._assert_skip_is_instant(g, 200000000)
+        # whatever the model orders first, position 200,000,000 is a real candidate of this
+        # grammar, and the one before it is different
+        self.assertRegex(deep, r"^[ab]\d+$")
+        self.assertNotEqual(deep, self._assert_skip_is_instant(g, 199999999))
 
     def test_skipping_deep_with_an_optional_slot_is_not_a_walk(self):
-        """Emptiness is fixed within a tier, so this divides its way in as well.
-
-        The first 200 candidates are the four-digit years; candidate 100,000,000 is then
-        99,999,800 into the remaining digit strings, which lands in the eight-digit run.
-        """
+        """Emptiness is fixed within a tier, so this divides its way in as well."""
         g = PassphraseGrammar({"passphrase": {
             "slots": [words(["a"]), digits(1, 8, optional=True)],
             "separators": ["-"], "priority": True}})
         self.assertEqual(g.count(), 111111111)      # 111,111,110 digit strings, plus "a" alone
-        self.assertEqual(next(g.generate()), "a-1900")
-        self.assertEqual(next(g.generate(skip=100000000)), "a-88888890")
+        deep = self._assert_skip_is_instant(g, 100000000)
+        self.assertRegex(deep, r"^a(-\d+)?$")
 
 
 if __name__ == '__main__':

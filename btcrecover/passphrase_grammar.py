@@ -36,11 +36,59 @@ out in a fixed order, which makes an interrupted search resumable.
             --addrs 1... --passwordlist -
 """
 
-import itertools, json, math, sys
+import bisect, itertools, json, math, sys
 
 from btcrecover.hangul_keys import to_keystrokes
 
 __all__ = ["PassphraseGrammar", "GrammarError"]
+
+
+_CUMULATIVE_CACHE = {}
+
+
+def _cumulative_widths(ranges):
+    """Running total of range widths, memoised: tier range lists are built once and reused
+    for every candidate drawn from them."""
+    key = id(ranges)
+    cached = _CUMULATIVE_CACHE.get(key)
+    if cached is None or cached[0] is not ranges:
+        totals, running = [], 0
+        for start, stop in ranges:
+            running += stop - start
+            totals.append(running)
+        _CUMULATIVE_CACHE[key] = cached = (ranges, totals)
+    return cached[1]
+
+
+def complement_ranges(total, taken):
+    """Everything in [0, total) that `taken` -- sorted, disjoint ranges -- does not cover.
+
+    Computed from the ranges rather than by walking the space: the space is as large as ten
+    to the eighth, and the ranges number in the thousands at worst.
+    """
+    gaps, cursor = [], 0
+    for start, stop in taken:
+        if start > cursor:
+            gaps.append((cursor, start))
+        cursor = max(cursor, stop)
+    if cursor < total:
+        gaps.append((cursor, total))
+    return gaps
+
+
+def ranges_from(values):
+    """Compress a sorted iterable of indexes into (start, stop) runs.
+
+    Tiers have to be expressible as index ranges -- that is what keeps a tier covering ten
+    million values free to construct and constant-time to index into.
+    """
+    ranges = []
+    for value in values:
+        if ranges and ranges[-1][1] == value:
+            ranges[-1][1] = value + 1
+        else:
+            ranges.append([value, value + 1])
+    return [tuple(r) for r in ranges]
 
 
 class GrammarError(ValueError):
@@ -54,6 +102,42 @@ class GrammarError(ValueError):
 # ranges -- that is what keeps --skip a division instead of a walk.
 YEAR_RANGE = (1900, 2100)
 YEAR_DIGITS = 4
+
+DAYS_IN_MONTH = (31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)   # February kept generous
+
+
+def _date_values(length):
+    """Digit strings of `length` that read as a date, as integers.
+
+    Four digits: MMDD. Six: YYMMDD, which is how a Korean ID number starts and how a great
+    many people write a birthday.
+    """
+    if length == 4:
+        return [month * 100 + day
+                for month in range(1, 13)
+                for day in range(1, DAYS_IN_MONTH[month - 1] + 1)]
+    if length == 6:
+        return [(year * 100 + month) * 100 + day
+                for year in range(100)
+                for month in range(1, 13)
+                for day in range(1, DAYS_IN_MONTH[month - 1] + 1)]
+    return []
+
+
+def _memorable_values(length):
+    """Digit strings people reach for when they want something they cannot forget:
+    all one digit, a run up or down, a repeating pair."""
+    out = set()
+    for digit in range(10):
+        out.add(int(str(digit) * length))                       # 0000, 1111
+    for start in range(10):
+        up = "".join(str((start + i) % 10) for i in range(length))
+        out.add(int(up))                                        # 1234, 7890
+        out.add(int(up[::-1]))                                  # 4321
+    if length % 2 == 0:
+        for pair in range(100):
+            out.add(int(("%02d" % pair) * (length // 2)))        # 1212, 121212
+    return sorted(v for v in out if v < 10 ** length)
 
 # Case transforms a "words" slot may apply, in the order they are tried.
 CASES = {
@@ -136,26 +220,40 @@ class _DigitsSlot(_Slot):
         raise IndexError(i)
 
     def priority_tiers(self):
-        """Year-like values first, then everything else, both as index ranges.
+        """What a digit run is most likely to be, in order: a year, then a date, then
+        something chosen to be memorable, then anything else.
 
-        Splitting a length at the year range leaves the remainder as two contiguous
-        pieces, so no tier ever needs to enumerate what it excludes.
+        Each tier is index ranges, never a list of values -- a tier over eight digits would
+        be a hundred million of them. The ranges are built once here, by walking each
+        length's block and asking what each value looks like.
         """
-        if not self.min_len <= YEAR_DIGITS <= self.max_len:
-            return [[(0, self.nonempty_len)]]
-
-        lo, hi, offset, years, rest = YEAR_RANGE[0], YEAR_RANGE[1], 0, [], []
+        by_tier = [[], [], []]      # years, dates, memorable
+        claimed = set()
+        offset = 0
         for k in range(len(self.bounds)):
             length = self.min_len + k
             start, stop = offset, self.bounds[k]
-            if length == YEAR_DIGITS:
-                years.append((start + lo, start + hi))
-                rest.append((start, start + lo))
-                rest.append((start + hi, stop))
-            else:
-                rest.append((start, stop))
             offset = stop
-        return [years, [r for r in rest if r[1] > r[0]]]
+
+            groups = []
+            if length == YEAR_DIGITS:
+                groups.append(range(YEAR_RANGE[0], YEAR_RANGE[1]))
+            else:
+                groups.append(())
+            groups.append(_date_values(length))
+            groups.append(_memorable_values(length))
+
+            for tier, values in enumerate(groups):
+                fresh = sorted(start + v for v in values if start + v not in claimed)
+                claimed.update(fresh)
+                by_tier[tier].extend(fresh)
+
+        tiers = [ranges_from(sorted(t)) for t in by_tier if t]
+        if not tiers:
+            return [[(0, self.nonempty_len)]]
+        rest = complement_ranges(self.nonempty_len,
+                                 sorted(r for tier in tiers for r in tier))
+        return tiers + ([rest] if rest else [])
 
 
 class _PoolSlot(_Slot):
@@ -354,13 +452,23 @@ class PassphraseGrammar:
 
     @staticmethod
     def _tier_index(ranges, i):
-        """Map a position within a tier to an index into the slot."""
-        for start, stop in ranges:
-            width = stop - start
-            if i < width:
+        """Map a position within a tier to an index into the slot.
+
+        Bisected rather than walked: a tier describing "every valid MMDD" is a dozen
+        ranges and one describing "every YYMMDD" is over a thousand, and this is called
+        once per slot per candidate.
+        """
+        if len(ranges) == 1:
+            start, stop = ranges[0]
+            if 0 <= i < stop - start:
                 return start + i
-            i -= width
-        raise IndexError(i)
+            raise IndexError(i)
+        cumulative = _cumulative_widths(ranges)
+        k = bisect.bisect_right(cumulative, i)
+        if k >= len(ranges):
+            raise IndexError(i)
+        start, _stop = ranges[k]
+        return start + i - (cumulative[k - 1] if k else 0)
 
     def _blocks(self):
         """Every combination of per-slot tiers, cheapest first.

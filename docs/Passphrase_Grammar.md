@@ -203,10 +203,18 @@ against 486 at two typos. Quoting slightly long is the safe direction.
 
 ## Priority order
 
-Candidates are emitted in likelihood order by default. Right now that model is one rule:
-**a four-digit run is tried as a year (1900–2099) before it is tried as anything else.**
-Birth years, wedding years, the year someone bought their first coin — these are what
-four digits in a passphrase usually are.
+Candidates are emitted in likelihood order by default. A digit run is tried as the things
+people actually put in passphrases, in this order:
+
+1. **a year**, 1900–2099, for a four-digit run — a birth year, a wedding year, the year
+   someone bought their first coin
+2. **a date** — `MMDD` for four digits, `YYMMDD` for six, which is how a Korean ID number
+   starts and how a great many people write a birthday
+3. **something chosen to be memorable** — all one digit, a run up or down, a repeating pair
+4. everything else
+
+Each tier is index ranges rather than a list of values, since a tier over eight digits would
+be a hundred million of them, and the ranges are bisected rather than walked.
 
 Measured rank of the correct passphrase, same grammar either way:
 
@@ -226,6 +234,38 @@ second choice in one slot is tried before one settling for second choices in two
 Set `"priority": false` in the grammar to get the raw product order instead. Either way
 the *set* of candidates is identical, so `count()` and the ETA are unchanged: ordering
 only decides how early within that total a search is likely to stop.
+
+### Measuring it
+
+`utilities/passphrase_rank_benchmark.py` reports where the true passphrase lands, with the
+ordering on and off, over a fixed set of cases:
+
+```bash
+python utilities/passphrase_rank_benchmark.py
+```
+
+Without a number for "sooner", every change to the model is an assertion — it looks more
+principled, so it must be better. Run this before and after instead.
+
+Current state, 19 cases: median position **20.15% → 1.25%** of the space, and **2 → 15** of
+them inside the first 10%.
+
+The cases are hand-written, and that is the honest limit of the tool: they encode what one
+person thinks passphrase construction looks like, so a model tuned until the number is
+beautiful has been tuned to those guesses. It is sound for catching a change that makes
+things worse, and for comparing two models on the same set. Replace the cases with real ones
+as soon as there are real ones.
+
+It is also what keeps the trade-offs visible. Adding the date tiers made two cases faster
+and two slower, and the six-digit tier is only worth it if six digits really are a birthday
+more often than not:
+
+| six-digit answer | plain | ordered | |
+|---|---|---|---|
+| `880301` (birthday) | 880,302 | 32,269 | 27x sooner |
+| `011225` (birthday) | 11,226 | 726 | 15x sooner |
+| `473916` (random) | 473,917 | 493,011 | 1.0x slower |
+| `112233` (neither) | 112,234 | 144,545 | 1.3x slower |
 
 ### Replacing the model
 

@@ -17,6 +17,36 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
+## 2026-08-22 — Measure the ordering before changing it
+
+**Added:** `utilities/passphrase_rank_benchmark.py`
+**Changed:** `btcrecover/passphrase_grammar.py`
+
+The priority model was one rule and no way to tell whether a second one would help. The
+benchmark reports where the true passphrase lands, ordering on and off, over a fixed set of
+cases — so a change to the model is an experiment rather than an assertion.
+
+The baseline it measured showed the model was *hurting* two of them: a four-digit date
+(`0301`) landed 1.7x later than with no ordering at all, and `1234` 1.2x later. Digit runs
+are now tried as a year, then a date (`MMDD`, or `YYMMDD` for six), then something chosen to
+be memorable, then anything else. Both cases now come out ahead, and the median position over
+19 cases went from 20.15% of the space to 1.25%, with 15 of them inside the first 10%.
+
+It also caught the cost of that, which is the point of having it. The six-digit date tier was
+justified by birthdays, and the benchmark had no birthday in it — so it showed only the
+1.3x penalty to a six-digit run that is not a date. With the missing cases added, both sides
+are visible: 27x and 15x sooner for the birthdays, 1.0-1.3x slower for the rest.
+
+Three grammar tests had pinned the old two-tier model's arithmetic. They assert properties
+now — that cost never decreases as the search proceeds, and that a deep skip returns rather
+than walking — so the next model change does not require rewriting them.
+
+Tiers are bisected rather than walked, since "every valid YYMMDD" is over a thousand ranges,
+and the leftover tier is computed as the complement of the claimed ranges. Building it by
+walking the space took the grammar test suite from 0.7 seconds to 30.
+
+---
+
 ## 2026-08-22 — Some of these words, not all of them
 
 **Changed:** `btcrecover/passphrase_grammar.py`, `webapp/diagnostic.html`
