@@ -17,6 +17,27 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
+## 2026-08-22 — Let the browser enforce the diagnostic page's promise
+
+**Added:** `webapp/_headers`, `webapp/README.md`
+
+The page tells visitors it makes no network request. That was true, and it was still only a
+promise from the people asking them to type fragments of a passphrase into it. `_headers`
+ships a Content-Security-Policy with `connect-src 'none'`, so the browser refuses `fetch`,
+`XMLHttpRequest` and `sendBeacon` on the page's behalf, and a visitor can read the policy out
+of the response headers rather than taking anyone's word for it.
+
+Verified with the policy applied rather than assumed: all three refused, network log empty,
+console naming the directive that stopped each one — and `config.json` still downloads,
+because a blob download is not a connection.
+
+`webapp/README.md` records which Cloudflare features have to stay off. Web Analytics, Rocket
+Loader, Auto Minify, Email obfuscation and Bot Fight Mode all work by injecting a script, and
+any one of them would both break the promise and make the page trip its own policy in front of
+the customer. None are on by default; all are one click away.
+
+---
+
 ## 2026-08-20 — Close the LevelDB files a Metamask wallet opens
 
 **Changed:** `btcrecover/btcrpass.py`, `btcrecover/test/test_passwords.py`
