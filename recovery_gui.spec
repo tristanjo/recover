@@ -17,8 +17,10 @@
 # -- see embed.prepare_frozen_start() for why that has to be survivable.
 
 import os
+import sys
 
 CONSOLE = os.environ.get("BTCR_GUI_CONSOLE") == "1"
+MACOS = sys.platform == "darwin"
 
 a = Analysis(
     ["recovery_gui.py"],
@@ -89,3 +91,27 @@ coll = COLLECT(
     upx=False,
     name="passphrase-recovery",
 )
+
+if MACOS:
+    # macOS will not treat a bare folder as an application, so the same collected tree is
+    # wrapped in a .app. The folder is still there next to it and still diffable; this
+    # only adds the wrapper that Finder needs to launch it.
+    #
+    # The binary inside is reachable directly, which is how the build self-tests itself:
+    #   passphrase-recovery.app/Contents/MacOS/passphrase-recovery --self-test
+    app = BUNDLE(
+        coll,
+        name="passphrase-recovery.app",
+        icon=None,
+        bundle_identifier="io.github.tristanjo.passphrase-recovery",
+        info_plist={
+            "NSHighResolutionCapable": True,      # otherwise Tk renders blurred on Retina
+            "NSRequiresAquaSystemAppearance": False,
+            "LSApplicationCategoryType": "public.app-category.utilities",
+            "CFBundleShortVersionString": os.environ.get("BTCR_GUI_VERSION", "0.0.0"),
+            "CFBundleVersion": os.environ.get("BTCR_GUI_VERSION", "0.0.0"),
+            # This program is offline by design and asks the customer to disconnect before
+            # entering a seed. Say so where the operating system can see it too.
+            "NSAppTransportSecurity": {"NSAllowsArbitraryLoads": False},
+        },
+    )

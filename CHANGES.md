@@ -17,6 +17,44 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
+## 2026-08-22 — Build for macOS as well
+
+**Changed:** `recovery_gui.spec`, `.github/workflows/build-macos.yml` (new),
+`.github/workflows/build-windows.yml`, `docs/Verifying_The_Download.md` (new)
+
+macOS will not launch a bare folder as an application, so the same collected tree is now
+also wrapped in a `.app` and shipped as a `.dmg`. The folder is still produced beside it and
+still diffable; the bundle only adds what Finder needs. Built and self-tested locally before
+being wired into CI: the `.app` passes, the `.dmg` mounts, and the app inside it passes —
+`TREZOR` recovered from the published BIP39 vector in 2.7 seconds on the wallycore backend.
+
+Both architectures are built. Rosetta would run an Intel binary on Apple Silicon, but at a
+fraction of the speed, on a job whose entire cost is speed — and a customer who downloads
+the wrong one gets a program that will not start and no explanation.
+
+**Gatekeeper is the real obstacle, and it is not solved.** Without an Apple Developer ID the
+bundle is only ad-hoc signed; `spctl -a -t exec` rejects it, and macOS blocks the first
+launch with a message that reads like malware being caught. For a program whose whole
+argument is that it can be checked, being stopped by the operating system with "cannot
+verify the developer" is close to the worst first impression available. Fixing it costs an
+Apple Developer account at $99 a year, which is a decision, not a commit. The signing and
+notarising steps are written and skipped when the secrets are absent, so they turn on the
+moment the account exists — including `stapler staple`, since the ticket has to be in the
+file for a machine that has been told to disconnect before running this.
+
+`docs/Verifying_The_Download.md` says all of that to the customer, including the part that
+does not flatter us: the file is not damaged, macOS says that about anything unsigned, and
+the operating system is right that it cannot identify who published it. It also draws the
+line around what the checks prove — the file matches the public source built in public —
+and what nothing proves, which is that there is no malware in it. Offline running is
+prevention, not evidence. The thing that actually protects the customer is moving the funds.
+
+The Windows job's release step now creates the release only if it is absent and uploads with
+`--clobber`. Two workflows and three jobs race for one tag; whichever arrives first should
+win rather than the second one failing.
+
+---
+
 ## 2026-08-22 — Say what happens after recovery before anyone starts
 
 **Changed:** `webapp/diagnostic.html`, `btcrecover/test/test_webapp_model.py`

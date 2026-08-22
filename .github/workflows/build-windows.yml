@@ -195,8 +195,13 @@ jobs:
           a self-test that recovers a known passphrase from the published BIP39 test vector.
           "@
           $notes | Out-File -FilePath notes.md -Encoding utf8
-          gh release create $env:GITHUB_REF_NAME "$env:PACKAGE.zip" "$env:PACKAGE.zip.sha256" `
-            --title $env:GITHUB_REF_NAME --notes-file notes.md
+          # Created if absent rather than unconditionally: the macOS workflow builds the
+          # same tag, and whichever job arrives first makes the release.
+          gh release view $env:GITHUB_REF_NAME *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:GITHUB_REF_NAME --title $env:GITHUB_REF_NAME --notes-file notes.md
+          }
+          gh release upload $env:GITHUB_REF_NAME "$env:PACKAGE.zip" "$env:PACKAGE.zip.sha256" --clobber
 
       - name: Record build provenance
         # Lets anyone verify the binary came from this repository at this commit:

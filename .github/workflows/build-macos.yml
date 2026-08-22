@@ -1,0 +1,218 @@
+# Builds the macOS recovery program, proves it works, and records where it came from.
+#
+# The Windows job's reasoning applies here unchanged: the run is public, the input is a
+# commit, and the attestation ties the binary to both. What differs is Gatekeeper. Without
+# an Apple Developer ID the .app is only ad-hoc signed, and macOS refuses to open it with a
+# message that reads exactly like malware being caught -- which is the opposite of what a
+# program asking for someone's seed phrase needs. The signing and notarising steps below
+# run when the secrets exist and are skipped when they do not, so the build is useful now
+# and correct the moment an account is available. See docs/Verifying_The_Download.md.
+#
+# Copyright (C) 2026 tristanjo. Part of btcrecover, GNU GPL v2 or later.
+
+name: Build macOS recovery program
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  build:
+    # Both architectures, because a customer who downloads the wrong one gets a program
+    # that will not start and no idea why. Rosetta would run an x86_64 build on Apple
+    # Silicon, but at a fraction of the speed, on a job whose whole cost is speed.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14      # Apple Silicon
+            arch: arm64
+          - runner: macos-13      # Intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller==6.22.2
+
+      - name: Check which secp256k1 backend got selected
+        run: |
+          python -c "from btcrecover import crypto_backends as c; print('secp256k1 backend:', c.BACKEND_NAME); raise SystemExit(0 if c.BACKEND_NAME in ('coincurve', 'wallycore') else 'fell back to the pure-Python backend')"
+
+      - name: Run the tests for the code this fork adds
+        timeout-minutes: 10
+        # Same set as the Windows job, and for the same reason: these cover what this fork
+        # wrote. Each in its own process -- test_seeds and test_passwords share global
+        # state in btcrpass and cannot be collected together.
+        run: |
+          python -m unittest btcrecover.test.test_passphrase_grammar
+          python -m unittest btcrecover.test.test_cjk_passphrase
+          python -m unittest btcrecover.test.test_hangul_keys
+          python -m unittest btcrecover.test.test_embed
+          python -m unittest btcrecover.test.test_recovery_gui
+          python -m unittest btcrecover.test.test_webapp_model
+
+      - name: Work out the version and anchor the build clock to the commit
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            version="${GITHUB_REF#refs/tags/}"
+          else
+            version="${GITHUB_SHA:0:7}"
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "BTCR_GUI_VERSION=${version#v}" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: pyinstaller --noconfirm --clean recovery_gui.spec
+
+      - name: Sign with a Developer ID
+        # Skipped without the secrets. An unsigned build still runs; it just makes the
+        # customer walk through System Settings to allow it, which is a poor thing to ask
+        # of someone who was told to be suspicious of this program in the first place.
+        if: env.MACOS_CERT_P12 != ''
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          echo "$MACOS_CERT_P12" | base64 --decode > cert.p12
+          security create-keychain -p runner build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p runner build.keychain
+          security import cert.p12 -k build.keychain -P "$MACOS_CERT_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k runner build.keychain
+          rm -f cert.p12
+          # --options runtime is what notarisation requires; --deep so the bundled
+          # dylibs are covered rather than just the outer wrapper.
+          codesign --force --deep --timestamp --options runtime \
+            --sign "$MACOS_SIGN_IDENTITY" dist/passphrase-recovery.app
+          codesign --verify --strict --verbose=2 dist/passphrase-recovery.app
+
+      - name: Self-test the built program
+        timeout-minutes: 5
+        # The binary tested here is the one that ships. A .app is a wrapper: the executable
+        # inside is reachable directly, so this needs no window and no `open -W`.
+        run: |
+          set +e
+          rm -f self-test.txt
+          ./dist/passphrase-recovery.app/Contents/MacOS/passphrase-recovery \
+            --self-test --report self-test.txt
+          code=$?
+          echo "exit code: $code"
+          if [ -f self-test.txt ]; then
+            echo "--- self-test.txt ---"; cat self-test.txt
+          else
+            echo "self-test.txt was not written; files here:"; ls | head -30
+          fi
+          [ "$code" -eq 0 ] || { echo "::error::self-test exited $code"; exit 1; }
+
+      - name: Check the built program kept its crypto backend
+        run: |
+          grep -Eq "secp256k1 backend: (coincurve|wallycore)" self-test.txt || {
+            cat self-test.txt
+            echo "::error::the built program did not select a C secp256k1 backend"
+            exit 1
+          }
+
+      - name: Package as a disk image
+        run: |
+          name="passphrase-recovery-${VERSION}-macos-${{ matrix.arch }}"
+          echo "PACKAGE=$name" >> "$GITHUB_ENV"
+          staging=dmg-root
+          mkdir -p "$staging"
+          cp -R dist/passphrase-recovery.app "$staging/"
+          cp LICENSE.txt self-test.txt "$staging/"
+          ln -s /Applications "$staging/Applications"
+          hdiutil create -volname "Passphrase Recovery" -srcfolder "$staging" \
+            -ov -format UDZO "$name.dmg"
+
+      - name: Notarise the disk image
+        # Signing alone is not enough: without a notarisation ticket macOS still stops the
+        # first launch. Stapling puts the ticket in the file so it also works offline --
+        # which matters here, because the customer is told to disconnect before running it.
+        if: env.MACOS_NOTARY_KEY != ''
+        env:
+          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER }}
+        run: |
+          echo "$MACOS_NOTARY_KEY" | base64 --decode > notary.p8
+          xcrun notarytool submit "$PACKAGE.dmg" \
+            --key notary.p8 --key-id "$MACOS_NOTARY_KEY_ID" \
+            --issuer "$MACOS_NOTARY_ISSUER" --wait
+          xcrun stapler staple "$PACKAGE.dmg"
+          rm -f notary.p8
+          spctl -a -t open --context context:primary-signature -vv "$PACKAGE.dmg"
+
+      - name: Publish the hash
+        # The number a customer compares against what they downloaded, in the run log,
+        # where it cannot be edited afterwards.
+        run: |
+          hash=$(shasum -a 256 "$PACKAGE.dmg" | awk '{print $1}')
+          echo "$hash  $PACKAGE.dmg" | tee "$PACKAGE.dmg.sha256"
+          {
+            echo "### SHA256 (${{ matrix.arch }})"
+            echo '```'
+            echo "$hash  $PACKAGE.dmg"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record build provenance
+        # Lets anyone verify the binary came from this repository at this commit:
+        #   gh attestation verify passphrase-recovery-*.dmg --repo tristanjo/recover
+        if: startsWith(github.ref, 'refs/tags/')
+        # Attestations need a public repository (or a paid plan), same as the Windows job.
+        # A build that is otherwise sound must not fail over it.
+        continue-on-error: true
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ env.PACKAGE }}.dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE }}
+          path: |
+            ${{ env.PACKAGE }}.dmg
+            ${{ env.PACKAGE }}.dmg.sha256
+          if-no-files-found: error
+
+      - name: Attach the build to a release
+        # Actions artifacts are re-zipped on download, so what a visitor saves has a
+        # different hash from the one published above. Release assets are served byte for
+        # byte. Created if absent rather than unconditionally: the Windows job and both
+        # architectures here race for the same tag, and whichever arrives first wins.
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          gh release view "$tag" >/dev/null 2>&1 || \
+            gh release create "$tag" --title "$tag" --notes "Built from \`$GITHUB_SHA\`."
+          gh release upload "$tag" "$PACKAGE.dmg" "$PACKAGE.dmg.sha256" --clobber
