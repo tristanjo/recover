@@ -17,6 +17,20 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
+## A failing Windows test now says what broke
+
+Three guesses at a Windows-only failure, three misses. The cause each time was the same:
+the run log needs credentials to read, and the annotation GitHub produced said only
+`Process completed with exit code 1`.
+
+Annotations are served by the public REST API. The suites now run through
+`.github/run_fork_tests.py`, which re-emits the lines that name a failure -- the test, the
+file and line, the assertion, the counts -- as one `::error::` per module. The next
+Windows failure can be read without an account.
+
+Checked by breaking a test on purpose and confirming the annotation carried the name, the
+line, and the assertion rather than an exit code.
+
 ## 2026-08-22 — Build for macOS as well
 
 **Changed:** `recovery_gui.spec`, `.github/workflows/build-macos.yml` (new),

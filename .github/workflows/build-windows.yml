@@ -93,12 +93,12 @@ jobs:
         # Each module in its own process: test_seeds and test_passwords share global state
         # in btcrpass and cannot be collected together, which is how run-all-tests.py does
         # it too.
-        run: |
-          python -m unittest btcrecover.test.test_passphrase_grammar
-          python -m unittest btcrecover.test.test_cjk_passphrase
-          python -m unittest btcrecover.test.test_hangul_keys
-          python -m unittest btcrecover.test.test_embed
-          python -m unittest -v btcrecover.test.test_recovery_gui
+        #
+        # A failure here used to be readable only by someone signed in with access to the
+        # log, which cost three wrong guesses at a Windows-only failure. The lines that
+        # name what broke are re-emitted as ::error:: annotations, and annotations are
+        # served by the public API -- so the next failure can be read without credentials.
+        run: python .github/run_fork_tests.py
 
       - name: Anchor the build clock to the commit
         # Two builds of one commit should have a chance of matching byte for byte, which

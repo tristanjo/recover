@@ -88,12 +88,7 @@ jobs:
         # Same set as the Windows job, and for the same reason: these cover what this fork
         # wrote. Each in its own process -- test_seeds and test_passwords share global
         # state in btcrpass and cannot be collected together.
-        run: |
-          python -m unittest btcrecover.test.test_passphrase_grammar
-          python -m unittest btcrecover.test.test_cjk_passphrase
-          python -m unittest btcrecover.test.test_hangul_keys
-          python -m unittest btcrecover.test.test_embed
-          python -m unittest btcrecover.test.test_recovery_gui
+        run: python .github/run_fork_tests.py
 
       - name: Work out the version and anchor the build clock to the commit
         run: |
