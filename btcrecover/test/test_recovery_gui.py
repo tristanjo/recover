@@ -149,6 +149,10 @@ class Helpers(unittest.TestCase):
         self.assertEqual(recovery_gui.SELF_TEST["passphrase"], "TREZOR")
 
 
+# Each gate test swaps this out and puts it back; keep the real one to restore.
+ROUTE_CHECK = recovery_gui.has_default_route
+
+
 @unittest.skipUnless(can_open_a_window, "no display available")
 class Screens(unittest.TestCase):
 
@@ -210,6 +214,57 @@ class Screens(unittest.TestCase):
         self.app._count_words()
         self.assertEqual(self.app.word_count.cget("text"), "3 단어")
 
+    def test_the_seed_screen_is_shut_while_the_network_is_up(self):
+        """The one screen where a secret is typed is the one that has to bite.
+
+        Offline is not proof of anything -- a program that wanted to steal a seed would
+        write it down and send it later, and the check would be its own word for it. What
+        this does stop is the honest failure: someone who meant to disconnect and forgot.
+        """
+        self._load()
+        recovery_gui.has_default_route = lambda: True
+        try:
+            self.app.show_mnemonic()
+            self.app.update_idletasks()
+            self.assertIn("disabled", self.app.start_button.state())
+            self.assertIn("네트워크가 아직 연결되어 있습니다", self._all_text())
+        finally:
+            recovery_gui.has_default_route = ROUTE_CHECK
+
+    def test_the_seed_screen_opens_when_the_network_is_down(self):
+        self._load()
+        recovery_gui.has_default_route = lambda: False
+        try:
+            self.app.show_mnemonic()
+            self.app.update_idletasks()
+            self.assertNotIn("disabled", self.app.start_button.state())
+        finally:
+            recovery_gui.has_default_route = ROUTE_CHECK
+
+    def test_a_virtual_adapter_can_be_overridden_deliberately(self):
+        # an OS reports a default route for VPN, VM and container adapters too, so a check
+        # with no way past would lock out people who really are offline
+        self._load()
+        recovery_gui.has_default_route = lambda: True
+        try:
+            self.app.show_mnemonic()
+            self.app.update_idletasks()
+            self.assertIn("disabled", self.app.start_button.state())
+            self.app.override.set(True)
+            self.app._apply_gate()
+            self.assertNotIn("disabled", self.app.start_button.state())
+        finally:
+            recovery_gui.has_default_route = ROUTE_CHECK
+
+    def test_the_override_starts_off(self):
+        self._load()
+        recovery_gui.has_default_route = lambda: True
+        try:
+            self.app.show_mnemonic()
+            self.assertFalse(self.app.override.get())
+        finally:
+            recovery_gui.has_default_route = ROUTE_CHECK
+
     def test_a_full_run_finds_it_and_names_the_form(self):
         self._load()
         self.app.show_mnemonic()
@@ -221,6 +276,30 @@ class Screens(unittest.TestCase):
         self.assertIn("NFC", screen)
         self.assertIn("옮기세요", screen)                    # move the funds, now
         self.assertTrue(self.app.result.found)
+
+    def test_success_tells_them_what_to_do_next_not_just_that_it_is_risky(self):
+        """Nobody can prove a seed did not leak. What can be done is make a leak worthless.
+
+        That is an action, taken by the customer, in the minutes after this screen appears
+        -- and this is the last screen anyone reads. So it has to say the steps, not just
+        that there is a risk.
+        """
+        self._load()
+        self.app.show_mnemonic()
+        self.app.mnemonic_text.insert("1.0", MNEMONIC)
+        self.app.start_search()
+        self._wait_for_result()
+        screen = self._all_text()
+        self.assertIn("지금 해야 할 일", screen)
+        for step in ("새 지갑", "보냅니다", "종이에"):
+            self.assertIn(step, screen)
+        # Moving coins needs a network, so "stay offline" cannot be the whole advice --
+        # the exposure begins when the machine reconnects, which makes the order the
+        # thing to say. Advice that cannot be followed is worse than none.
+        self.assertIn("연결", screen)
+        self.assertIn("먼저", screen)
+        # and it must not claim more than it can: no promise that nothing leaked
+        self.assertNotIn("안전합니다", screen)
 
     def test_a_miss_says_so_without_blaming_the_program(self):
         cfg = json.loads(json.dumps(CONFIG))

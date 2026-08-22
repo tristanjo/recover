@@ -17,6 +17,51 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
+## 2026-08-22 — Shut the seed screen while the network is up, and say what to do after
+
+**Changed:** `recovery_gui.py`, `btcrecover/test/test_recovery_gui.py`,
+`docs/One_Binary_For_Everyone.md` (new), removed `webapp/아카이브.zip`
+
+Offline running was being treated as an answer to "how do I know this has no malware". It
+is not, and saying it is costs credibility that the parts which *are* verifiable then have
+to pay for. Malware does not need to send a seed at the moment it sees it — it writes it
+down and sends it when the machine reconnects, and deleting the program removes the
+program, not what the program wrote. The connectivity check is also the suspected party's
+own word for its own innocence.
+
+So the claim is scaled back to what it is worth, and the program now does two things that
+are worth something.
+
+**The seed screen is shut while a network route exists.** The screen before it holds no
+secret, so it still only warns; this one is where a secret is typed. It does not stop
+malware — nothing here could — but it stops the honest failure of meaning to disconnect and
+forgetting. An operating system reports a default route for VPN, virtual machine and
+container adapters too, so an unbypassable check would lock out people who really are
+offline: there is a deliberate override that says what it is. The warning is set larger
+than body text and carries a drawn warning triangle rather than a Unicode glyph, which
+renders as an empty box on a Windows without the right font.
+
+**The success screen says what to do, not just that there is a risk.** Nobody can prove a
+seed did not leak. What can be done is make a leak worthless, and that is an action the
+customer takes in the next few minutes — on the last screen anyone reads. It now gives the
+steps, and gets the order right: moving coins needs a network, so "stay offline" cannot be
+the whole advice. The exposure begins when the machine reconnects, which makes the ordering
+the thing to say — reconnect, then move the funds before anything else gets a turn.
+
+`docs/One_Binary_For_Everyone.md` records why every customer gets the same executable
+rather than one built with their address compiled in: the licence obliges us to hand over
+the means to remove any such check, upstream btcrecover is free anyway so there is nothing
+to guard, per-customer builds destroy the one property that makes a published hash mean
+anything, and building in the open would publish a list of addresses whose owners are
+locked out of them.
+
+`webapp/아카이브.zip` was a stale copy of the site from an earlier manual upload, tracked
+in the repository and therefore served from the deployed page. A second, older, downloadable
+version of the very page whose integrity customers are asked to check is exactly the wrong
+thing to leave lying about. Removed.
+
+---
+
 ## 2026-08-22 — Let the address decide the derivation path, and name a multisig one
 
 **Changed:** `webapp/diagnostic.html`, `btcrecover/test/test_webapp_model.py`

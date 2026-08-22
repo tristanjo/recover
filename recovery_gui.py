@@ -122,6 +122,41 @@ class RecoveryApp(tk.Tk):
         self.title_font = tkfont.Font(font=tkfont.nametofont("TkDefaultFont"))
         self.title_font.configure(size=16, weight="bold")
         self.mono = tkfont.Font(family="Consolas" if "Consolas" in families else "Courier", size=13)
+        self.bold = tkfont.Font(font=tkfont.nametofont("TkDefaultFont"))
+        self.bold.configure(size=13, weight="bold")
+        # The one line a customer must not skim past gets its own size.
+        self.alarm = tkfont.Font(font=tkfont.nametofont("TkDefaultFont"))
+        self.alarm.configure(size=15, weight="bold")
+
+    def _icon(self, parent, kind, size=28):
+        """A warning triangle or an all-clear tick, drawn rather than typed.
+
+        A Unicode glyph would be one line, but whether it arrives as a symbol or as an
+        empty box depends on which fonts the customer's Windows happens to have. Drawing
+        it means it looks the same on every machine, which for the one warning that
+        matters most is worth the extra lines.
+        """
+        try:
+            background = ttk.Style().lookup("TLabelframe", "background") or None
+        except tk.TclError:
+            background = None
+        canvas = tk.Canvas(parent, width=size, height=size, highlightthickness=0,
+                           borderwidth=0, background=background or self.cget("background"))
+        pad, mid = size * 0.08, size / 2.0
+        if kind == "warn":
+            canvas.create_polygon(mid, pad, size - pad, size - pad * 1.6, pad, size - pad * 1.6,
+                                  fill="#dc2626", outline="#991b1b", width=1)
+            canvas.create_line(mid, size * 0.34, mid, size * 0.63,
+                               fill="white", width=max(2, int(size * 0.10)), capstyle="round")
+            canvas.create_oval(mid - size * 0.055, size * 0.71, mid + size * 0.055, size * 0.82,
+                               fill="white", outline="")
+        else:
+            canvas.create_oval(pad, pad, size - pad, size - pad,
+                               fill="#16a34a", outline="#15803d", width=1)
+            canvas.create_line(size * 0.28, mid, size * 0.44, size * 0.66, size * 0.73, size * 0.34,
+                               fill="white", width=max(2, int(size * 0.11)),
+                               capstyle="round", joinstyle="round")
+        return canvas
 
     # ---- screen plumbing -------------------------------------------------
 
@@ -324,13 +359,74 @@ class RecoveryApp(tk.Tk):
 
         ttk.Label(self.container, foreground="#b45309", wraplength=640, justify="left",
                   text="복구에 성공하면 자금을 곧바로 새 지갑으로 옮기세요. 이 시드 문구는 "
-                       "복구 과정에서 메모리에 올라왔으므로 더 이상 안전하다고 볼 수 없습니다."
+                       "복구 과정에서 이 컴퓨터의 메모리를 거치므로 더 이상 안전하다고 볼 수 "
+                       "없습니다. 송금에는 인터넷이 필요한데, 다시 연결하는 순간이 가장 위험한 "
+                       "순간입니다 \u2014 연결한 뒤에는 다른 무엇보다 먼저 자금을 옮기세요."
                   ).pack(anchor="w", pady=(12, 0))
+
+        # This is the only screen where a secret is typed, so this is where the network
+        # check has to bite. The screen before it warns and lets you carry on, which is
+        # right -- a config file holds no secret and there is nothing to protect yet.
+        self.gate = ttk.Frame(self.container)
+        self.gate.pack(fill="x", pady=(12, 0))
+        self.override = tk.BooleanVar(value=False)
+        self.start_button = None
+        self._render_gate()
 
         nav = ttk.Frame(self.container)
         nav.pack(side="bottom", fill="x")
         ttk.Button(nav, text="←  뒤로", command=self.show_summary).pack(side="left")
-        ttk.Button(nav, text="찾기 시작", command=self.start_search).pack(side="right")
+        self.start_button = ttk.Button(nav, text="찾기 시작", command=self.start_search)
+        self.start_button.pack(side="right")
+        self._apply_gate()
+
+    def _render_gate(self):
+        """The network gate, redrawn whenever it is re-checked."""
+        for child in self.gate.winfo_children():
+            child.destroy()
+        if not has_default_route():
+            ok = ttk.Frame(self.gate)
+            ok.pack(fill="x")
+            self._icon(ok, "ok", 24).pack(side="left", padx=(0, 9))
+            ttk.Label(ok, foreground="#15803d", font=self.bold,
+                      text="네트워크에 연결되어 있지 않습니다").pack(side="left")
+            return
+
+        box = ttk.LabelFrame(self.gate, text=" 네트워크 확인 ", padding=12)
+        box.pack(fill="x")
+        head = ttk.Frame(box)
+        head.pack(fill="x")
+        self._icon(head, "warn", 30).pack(side="left", padx=(0, 11), anchor="n")
+        said = ttk.Frame(head)
+        said.pack(side="left", fill="x", expand=True)
+        ttk.Label(said, foreground="#b91c1c", font=self.alarm,
+                  text="네트워크가 아직 연결되어 있습니다").pack(anchor="w")
+        ttk.Label(said, wraplength=560, justify="left", padding=(0, 5, 0, 0),
+                  text="랜선을 뽑고 Wi-Fi를 끈 뒤 [다시 확인]을 눌러 주세요.\n"
+                       "이 프로그램은 네트워크를 쓰지 않지만, 같은 컴퓨터의 다른 프로그램은 "
+                       "그렇지 않습니다.").pack(anchor="w")
+        row = ttk.Frame(box)
+        row.pack(anchor="w", pady=(10, 0))
+        ttk.Button(row, text="다시 확인", command=self._recheck_gate).pack(side="left")
+
+        # An OS reports a default route for VPN, virtual machine and container adapters
+        # too, so a check that cannot be overridden would lock out people who really are
+        # offline. The override is deliberate and says what it is; it is here to stop
+        # someone forgetting, not to stop someone who has decided.
+        ttk.Checkbutton(box, variable=self.override, command=self._apply_gate,
+                        text="가상 어댑터(VPN, 가상머신 등) 때문이며 실제로는 "
+                             "연결되어 있지 않습니다. 확인했고 진행합니다."
+                        ).pack(anchor="w", pady=(8, 0))
+
+    def _recheck_gate(self):
+        self._render_gate()
+        self._apply_gate()
+
+    def _apply_gate(self):
+        if self.start_button is None:
+            return
+        blocked = has_default_route() and not self.override.get()
+        self.start_button.state(["disabled"] if blocked else ["!disabled"])
 
     def _count_words(self, _event=None):
         words = self.mnemonic_text.get("1.0", "end").split()
@@ -424,9 +520,35 @@ class RecoveryApp(tk.Tk):
                           text="유니코드 형태: {}  —  화면으로는 구분되지 않으므로, 다른 지갑에 "
                                "다시 입력할 때 같은 형태로 넣어야 같은 지갑이 열립니다.".format(
                                    result.normalization)).pack(anchor="w", pady=(8, 0))
-            ttk.Label(self.container, foreground="#b91c1c", wraplength=640, justify="left",
-                      text="지금 바로 자금을 새로 만든 지갑으로 옮기세요. 이 시드 문구와 "
-                           "패스프레이즈는 이 컴퓨터의 메모리를 거쳤습니다.").pack(anchor="w")
+            # The moment someone is happiest is the moment they are most exposed, and it
+            # is the last moment anyone will read anything. Nobody can prove a seed did
+            # not leak -- not us, not an auditor. What can be done is make a leak worth
+            # nothing, and that is a thing the customer does, in the next few minutes.
+            after = ttk.LabelFrame(self.container, text=" 지금 해야 할 일 ", padding=14)
+            after.pack(fill="x", pady=(4, 0))
+            ttk.Label(after, foreground="#b91c1c", font=self.bold, wraplength=600,
+                      justify="left",
+                      text="찾은 즉시 자금을 새 지갑으로 옮기세요.").pack(anchor="w")
+            ttk.Label(after, wraplength=600, justify="left", text=(
+                "1.  위 패스프레이즈를 종이에 옮겨 적습니다.\n"
+                "2.  믿을 수 있는 기기에서 새 지갑을 만듭니다 (새 시드 문구).\n"
+                "3.  인터넷을 다시 연결하고, 그 즉시 이 지갑의 자금 전부를 새 주소로 보냅니다.\n"
+                "4.  새 시드 문구를 종이에 적어 보관합니다."
+            )).pack(anchor="w", pady=(6, 0))
+            # Moving coins needs a network, so "stay offline" cannot be the whole advice.
+            # The exposure starts when the machine reconnects, which makes the order the
+            # thing that matters: reconnect, then move, before anything else gets a turn.
+            ttk.Label(after, foreground="#b45309", wraplength=600, justify="left", text=(
+                "송금에는 인터넷 연결이 필요합니다. 다시 연결하는 순간이 가장 위험한 "
+                "순간이므로, 연결한 뒤에는 다른 무엇보다 먼저 자금 이동을 하세요. "
+                "가능하다면 이 컴퓨터가 아닌 다른 기기에서 하시는 편이 낫습니다."
+            )).pack(anchor="w", pady=(8, 0))
+            ttk.Label(after, foreground="#555", wraplength=600, justify="left", text=(
+                "이 시드 문구와 패스프레이즈는 방금 이 컴퓨터의 메모리를 거쳤습니다. "
+                "이 프로그램이 아니더라도 이 컴퓨터에 다른 무엇이 있었는지는 아무도 "
+                "증명할 수 없습니다. 자금을 옮기고 나면 옛 시드가 새어 나갔더라도 "
+                "빈 지갑이 되므로, 그 증명이 필요 없어집니다."
+            )).pack(anchor="w", pady=(8, 0))
         elif result.aborted:
             self._heading("중단했습니다")
             ttk.Label(self.container, wraplength=640, justify="left",
