@@ -225,6 +225,47 @@ class Typos(unittest.TestCase):
         self.assertIn("--typos-case", argv)
 
 
+class WorkerFeeding(unittest.TestCase):
+    """How much work goes to a worker at a time, which nothing user-visible reveals.
+
+    btcrpass hands passphrases to its worker processes in chunks sized to a hundredth of a
+    second. On a machine with many cores that is small enough that handing them over costs
+    more than checking them -- measured on 14 cores, the default ran 2,083/s where 0.05
+    seconds per chunk ran 9,370/s. Nothing fails when this regresses; the search is simply
+    four times longer, which is invisible unless someone is holding a stopwatch.
+    """
+
+    def test_the_search_asks_for_a_longer_chunk(self):
+        from btcrecover import btcrpass
+        seen = []
+        original = btcrpass.parse_arguments
+
+        def spy(*args, **kwds):
+            seen.append(btcrpass.chunk_seconds_hint)
+            return original(*args, **kwds)
+
+        btcrpass.parse_arguments = spy
+        try:
+            embed.run(embed.SearchPlan(config()), MNEMONIC)
+        finally:
+            btcrpass.parse_arguments = original
+        self.assertEqual(seen, [embed.CHUNK_SECONDS])
+        self.assertGreaterEqual(embed.CHUNK_SECONDS, 0.05)
+
+    def test_the_hint_is_cleared_afterwards(self):
+        # it is a module global in btcrpass; leaving it set would follow the next caller
+        from btcrecover import btcrpass
+        embed.run(embed.SearchPlan(config()), MNEMONIC)
+        self.assertIsNone(btcrpass.chunk_seconds_hint)
+
+    def test_the_rate_is_measured_rather_than_assumed(self):
+        # the chunk size is derived from est_secs_per_password, so skipping the pre-start
+        # benchmark to save 0.13s leaves the wallet's own guess -- off by 8x here -- in
+        # charge of it. That trade was measured and is not worth making.
+        plan = embed.SearchPlan(config())
+        self.assertNotIn("--skip-pre-start", plan._argv(MNEMONIC))
+
+
 class Failures(unittest.TestCase):
     """btcrpass reports bad input by calling sys.exit; a GUI must get a message instead."""
 

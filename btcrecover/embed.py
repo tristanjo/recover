@@ -47,6 +47,13 @@ __all__ = ["SearchPlan", "SearchResult", "run", "prepare_frozen_start"]
 DEFAULT_ADDRESS_LIMIT = 10
 DEFAULT_PATHS = ["m/44'/0'/0'/0", "m/49'/0'/0'/0", "m/84'/0'/0'/0"]
 
+# How much work to hand a worker process at a time. btcrpass defaults to a hundredth of a
+# second, which on a machine with many cores spends more time handing passphrases across
+# than checking them: measured on 14 cores, 0.01 ran 2,083/s and 0.05 ran 9,370/s, and it
+# is flat from there to 1 second. Kept short enough that Stop still feels immediate, since
+# the abort is only noticed between chunks.
+CHUNK_SECONDS = 0.05
+
 
 def prepare_frozen_start():
     """Must be the first thing a frozen executable does, before any other work.
@@ -228,7 +235,6 @@ class SearchPlan:
             "--no-eta",
             "--no-dupchecks",
             "--dsw",             # the host is responsible for its own security notices
-            "--skip-pre-start",
         ]
         argv += self.typos
         if self.language:
@@ -297,6 +303,7 @@ def run(plan, mnemonic, progress=None, abort=None, threads=None, skip=0):
     with _search_lock:
         btcrpass.progress_hook = on_progress
         btcrpass.abort_event = abort
+        btcrpass.chunk_seconds_hint = CHUNK_SECONDS
         try:
             # btcrpass narrates to stdout throughout; a GUI wants that as text it can show
             # on demand, not interleaved with whatever else the process is printing.
@@ -314,6 +321,7 @@ def run(plan, mnemonic, progress=None, abort=None, threads=None, skip=0):
         finally:
             btcrpass.progress_hook = None
             btcrpass.abort_event = None
+            btcrpass.chunk_seconds_hint = None
 
     log = captured.getvalue()
     elapsed = time.monotonic() - started

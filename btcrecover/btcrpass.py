@@ -5880,8 +5880,14 @@ def _do_safe_print(*args, **kwargs):
 #                                caller asked for --no-eta and the count is not known here
 #   abort_event                  polled between chunks; when set the search stops and
 #                                returns like a clean miss, leaving the wallet untouched
-progress_hook = None
-abort_event   = None
+#   chunk_seconds_hint           how much work to hand a worker per round trip, in
+#                                seconds; overrides CHUNKSIZE_SECONDS below. The default
+#                                0.01 leaves a many-core machine feeding its workers in
+#                                pieces small enough that the handing-over costs more
+#                                than the work -- measured at 4.5x on 14 cores.
+progress_hook      = None
+abort_event        = None
+chunk_seconds_hint = None
 
 
 def error_exit(*messages):
@@ -9752,7 +9758,8 @@ def main():
         chunksize = loaded_wallet.chunksize
     else:
         # (see CHUNKSIZE_SECONDS above)
-        chunksize = int(round(CHUNKSIZE_SECONDS / est_secs_per_password)) or 1
+        chunksize = int(round((chunk_seconds_hint or CHUNKSIZE_SECONDS)
+                              / est_secs_per_password)) or 1
 
     # If the time to verify a password is short enough, the time to generate the passwords in this thread
     # becomes comparable to verifying passwords, therefore this should count towards being a "worker" thread

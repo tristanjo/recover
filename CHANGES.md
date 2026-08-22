@@ -17,6 +17,42 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
+## 2026-08-22 — Stop starving the worker processes (4x)
+
+**Changed:** `btcrecover/btcrpass.py`, `btcrecover/embed.py`, `btcrecover/test/test_embed.py`
+
+Found while measuring throughput for a machine-specific time estimate, not from any failure:
+the embedded search was running at a quarter of the speed it should. 111,110 candidates took
+48.0 seconds where the same search from the command line took 19.4.
+
+btcrpass hands passphrases to its worker processes in chunks sized to last about a hundredth
+of a second, computed from `est_secs_per_password`. `embed` passed `--skip-pre-start`, so that
+estimate was not measured but taken from the wallet's own declared rate — 262/s against a real
+1,041/s, off by 4x, producing chunks of 3 passphrases. Fourteen workers then spent most of
+their time waiting on the parent to hand them the next three.
+
+Two things were wrong, and both were mine:
+
+* `--skip-pre-start` is an option this fork added, to save startup time. Measured, the
+  benchmark it skips takes **0.13 seconds**. It is no longer passed.
+* A hundredth of a second per chunk is too small on a machine with many cores regardless of
+  the estimate. Swept on 14 cores: chunk 3 → 2,083/s, 14 → 6,635/s, 64 → 9,370/s, and flat
+  from there through 1,024. `btcrpass.chunk_seconds_hint` lets an embedding caller raise the
+  target; `embed.CHUNK_SECONDS` sets it to 0.05, short enough that Stop still feels immediate
+  since the abort is only noticed between chunks.
+
+Together: **48.0 seconds → 12.1 seconds**. The effective core count is now 6.9 of 14, which
+agrees with the 918% CPU seen from the command line — the two measurements that disagreed
+before now do not.
+
+The command-line default is unchanged: `chunk_seconds_hint` is None there, and
+`--skip-pre-start` still exists for anyone who wants it.
+
+`WorkerFeeding` in `test_embed.py` guards this. Nothing failed while it was broken and nothing
+would have — a search four times too slow looks exactly like a search.
+
+---
+
 ## 2026-08-22 — Write down why --no-dupchecks is the default
 
 **Changed:** `docs/Passphrase_Grammar.md`
