@@ -17,6 +17,34 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
+## The Windows job was reporting success over a red suite
+
+`test_cjk_passphrase` -- the suite covering this fork's whole reason for existing -- has
+been failing on Windows since it was written, and v0.1.5 and v0.1.6 shipped anyway.
+
+The step listed the suites one `python -m unittest` per line. That shell keeps going after
+a failing line and exits with the *last* line's status, so every failure but the last was
+discarded. Only when a GUI test broke did anything turn red, and the Korean failure
+underneath it stayed invisible.
+
+Two real faults were hiding there:
+
+- On Windows a bare interpreter encodes stdout as cp1252, in which Hangul cannot be
+  represented, so printing a recovered passphrase raised `UnicodeEncodeError` -- at the
+  exact moment of success. The shipped program never meets this (`_ensure_streams()` runs
+  before anything else, in every worker too); the tests drive `btcrseed` underneath that
+  entry point and had to stand it up themselves. Reproduced here with
+  `PYTHONIOENCODING=cp1252`, character-for-character, then fixed.
+- The wheel test asked a real 760x400 window whether it had scrolled. It was measuring
+  whether Tk had finished laying out, which differs by platform. It tests the decision
+  now -- direction, distance, and whether to move at all -- and each of those was checked
+  by breaking it on purpose.
+
+`.github/run_fork_tests.py` replaces the list of lines: every suite runs, every failure
+counts, and `test_ci_test_step.py` fails if either stops being true. Running the set under
+a cp1252 stdout found one more hole -- the runner itself died relaying Korean output --
+which is closed and pinned.
+
 ## A failing Windows test now says what broke
 
 Three guesses at a Windows-only failure, three misses. The cause each time was the same:

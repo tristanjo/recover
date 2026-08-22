@@ -32,7 +32,23 @@ import os, sys, unicodedata, unittest
 
 if __name__ == '__main__':
     sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
-from btcrecover import btcrseed
+from btcrecover import btcrseed, embed
+
+
+def setUpModule():
+    """Run these under the same stdout the shipped program runs under.
+
+    On a match btcrseed prints the recovered passphrase, and on Windows a bare
+    interpreter encodes stdout as cp1252, in which Hangul has no representation --
+    so the print raises UnicodeEncodeError at the exact moment of success. The
+    program never meets that: embed._ensure_streams() runs before anything else,
+    in every worker process too.
+
+    These tests drive btcrseed directly, underneath that entry point, so they have
+    to stand it up themselves. Calling the real function rather than repeating what
+    it does means removing the protection from the product turns these red.
+    """
+    embed._ensure_streams()
 
 
 # A standard BIP39 test mnemonic, so the only variable under test is the passphrase.

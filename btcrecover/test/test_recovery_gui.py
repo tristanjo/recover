@@ -352,51 +352,51 @@ class Screens(unittest.TestCase):
         self.assertEqual(recovery_gui.check_mnemonic("")[0], "empty")
         self.assertEqual(recovery_gui.check_mnemonic(MNEMONIC.upper())[0], "ok")
 
-    def test_the_wheel_handler_scrolls_when_there_is_somewhere_to_go(self):
-        """Tests the decision, not Tk's event delivery.
+    def _wheel_moves(self, view, delta=0, num="??"):
+        """Runs _wheel against a stubbed viewport and reports what it asked for.
 
-        The first version generated a synthetic <MouseWheel> and asserted the view moved.
-        That passed here and failed on Windows -- where a synthetic wheel event does not
-        reach the handler -- so it was measuring the toolkit rather than this code, and the
-        failure said nothing about whether scrolling works for a person with a mouse.
-
-        What is worth pinning down is the rule: move when there is somewhere to go, do
-        nothing when the screen already fits.
+        Stubbed because the real one answers questions about a window Tk has not
+        necessarily finished laying out, and that answer differs between platforms.
         """
-        class Wheel:
-            num, delta = "??", -120
+        event = type("Wheel", (), {"num": num, "delta": delta})()
 
-        self.app.geometry("760x400")
-        self.app.update_idletasks()
-        self._load()
-        self.app.show_mnemonic()
-        self.app.update_idletasks()
+        moves = []
+        self.app._viewport.yview_scroll = lambda *asked: moves.append(asked)
+        self.app._viewport.yview = lambda: view
         try:
-            first, last = self.app._viewport.yview()
-            if last >= 1.0:
-                self.skipTest("this screen fits; nothing to scroll")
-            before = self.app._viewport.yview()[0]
-            self.app._wheel(Wheel())
-            self.app.update_idletasks()
-            self.assertGreater(self.app._viewport.yview()[0], before)
-        finally:
-            self.app.geometry("760x680")
-            self.app.update_idletasks()
+            self.handled = self.app._wheel(event)
+        finally:  # instance attributes shadowing the widget's own methods; drop both
+            del self.app._viewport.yview_scroll
+            del self.app._viewport.yview
+        return moves
+
+    def test_the_wheel_handler_scrolls_when_there_is_somewhere_to_go(self):
+        """Tests the decision, not Tk's geometry.
+
+        Two earlier versions asked the real viewport to move and asserted that it had.
+        Both passed on macOS and failed on Windows with "0.0 not greater than 0.0" --
+        they were measuring whether the toolkit had finished laying out a 760x400 window,
+        which is not something this code decides.
+
+        What this code does decide: whether to move at all, which way, and how far.
+        """
+        self.assertEqual(self._wheel_moves(view=(0.2, 0.6), delta=-120), [(3, "units")],
+                         "a notch down did not scroll down")
+        self.assertEqual(self._wheel_moves(view=(0.2, 0.6), delta=120), [(-3, "units")],
+                         "a notch up did not scroll up")
+        # X11 reports the wheel as button 4 and 5 rather than as a delta
+        self.assertEqual(self._wheel_moves(view=(0.2, 0.6), num=4), [(-1, "units")])
+        self.assertEqual(self._wheel_moves(view=(0.2, 0.6), num=5), [(1, "units")])
+        # a hard flick moves further, but not the length of the whole screen
+        self.assertEqual(self._wheel_moves(view=(0.2, 0.6), delta=-4000), [(5, "units")],
+                         "one flick jumped further than a person could follow")
+        # the event is consumed, so it does not also scroll something underneath
+        self.assertEqual(self.handled, "break")
 
     def test_the_wheel_does_nothing_when_the_screen_fits(self):
-        class Wheel:
-            num, delta = "??", -120
-
-        moved = []
-        original = self.app._viewport.yview_scroll
-        self.app._viewport.yview_scroll = lambda *a: moved.append(a)
-        self.app._viewport.yview = lambda: (0.0, 1.0)
-        try:
-            self.app._wheel(Wheel())
-        finally:
-            self.app._viewport.yview_scroll = original
-            del self.app._viewport.yview
-        self.assertFalse(moved, "scrolled a screen that was already whole")
+        # scrolling a whole screen shows blank space and reads as a broken window
+        self.assertFalse(self._wheel_moves(view=(0.0, 1.0), delta=-120),
+                         "scrolled a screen that was already whole")
 
     def test_the_wheel_is_bound_beyond_the_scrollbar(self):
         # bind_all catches most of it; the viewport and the content are bound too, so a

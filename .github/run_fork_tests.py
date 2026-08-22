@@ -15,12 +15,28 @@ import re
 import subprocess
 import sys
 
+def speak_utf8():
+    """Relaying Korean test output through a cp1252 stdout kills this script.
+
+    The same trap embed._ensure_streams() exists for, one level up: these suites print
+    Hangul, and on Windows a redirected stdout encodes as cp1252 by default. Inlined
+    rather than imported so a broken install still reports why it is broken.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError, LookupError):
+                pass
+
+
 MODULES = (
     "btcrecover.test.test_passphrase_grammar",
     "btcrecover.test.test_cjk_passphrase",
     "btcrecover.test.test_hangul_keys",
     "btcrecover.test.test_embed",
     "btcrecover.test.test_recovery_gui",
+    "btcrecover.test.test_ci_test_step",
 )
 
 # The verdict lines, the test that produced them, and the frames in between.
@@ -51,6 +67,7 @@ def annotate(module, output):
 
 
 def main():
+    speak_utf8()
     broke = []
     for module in MODULES:
         code, output = run(module)
