@@ -17,6 +17,24 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
+## The progress bar read 78256.4%
+
+Over "122,080 / 156". Two numbers counting different things, divided by each other.
+
+btcrpass reports `passwords_tried`: every typo variant of every candidate. The total came
+from `candidate_count()`, which counts candidates before that expansion. With typos on,
+one is hundreds of times the other -- 782x in the run that produced that screenshot.
+
+The exact expanded total is not available, and getting it would cost more than the bar is
+worth: `--no-eta` is passed on purpose so btcrecover does not walk a hundred million
+passwords just to draw one. So progress is counted where this side can count it exactly --
+off the candidate generator, which is ours. It can sit slightly ahead of what has been
+tested, since btcrpass reads a chunk ahead per worker, and it is clamped so it never
+passes the end.
+
+Measured before and after on the same search: 0.43% to 1260.04% became 2.57% to 100.00%,
+with the last report landing exactly on the total.
+
 ## Keystone, and steel
 
 The list of hardware wallets that support a BIP39 passphrase now names Keystone, and the

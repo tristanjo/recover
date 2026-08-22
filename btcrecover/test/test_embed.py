@@ -106,13 +106,14 @@ ADDR_NFC = "12inFmZTGQ3YS2LRTHytWcSwRv3jH9yNLu"   # wallet that stored the passp
 PASSPHRASE = "비밀번호2024"
 
 
-def config(slots=None, **wallet_overrides):
+def config(slots=None, typos=None, **wallet_overrides):
     wallet = {"type": "bip39", "addresses": [ADDR_NFC], "language": "en",
               "derivation_paths": ["m/44'/0'/0'/0"], "address_limit": 5}
     wallet.update(wallet_overrides)
     return {
         "version": 1,
         "wallet": wallet,
+        "typos": typos or {},
         "passphrase": {
             "slots": slots if slots is not None else [
                 {"type": "words", "candidates": ["비밀번호"], "cases": ["asis"]},
@@ -183,6 +184,30 @@ class Searching(unittest.TestCase):
         self.assertTrue(result.found)
         self.assertTrue(seen)
         self.assertEqual(seen[-1][1], plan.candidate_count())
+
+    def test_progress_never_runs_past_the_end(self):
+        """The bar read "78256.4%" over "122,080 / 156".
+
+        btcrpass counts passwords tried -- every typo variant of every candidate -- and
+        the total here counts candidates. With typos on, one is hundreds of times the
+        other, so the two must not be divided by each other. Progress is counted off the
+        candidate generator instead, which this side owns and can count exactly.
+        """
+        plan = embed.SearchPlan(config(
+            slots=[{"type": "words", "candidates": ["비밀번호"], "cases": ["asis"]},
+                   {"type": "digits", "length": [1, 3]}],
+            typos={"case": True, "swap": True, "max": 1}))
+        seen = []
+        embed.run(plan, MNEMONIC, progress=lambda tried, total: seen.append((tried, total)))
+
+        self.assertTrue(seen, "no progress at all")
+        total = plan.candidate_count()
+        for tried, reported in seen:
+            self.assertEqual(reported, total)
+            self.assertLessEqual(tried, total,
+                                 "{:,} of {:,} is {:.0f}%".format(tried, total,
+                                                                  100.0 * tried / total))
+        self.assertEqual(seen[-1][0], total, "the bar stopped short of the end")
 
     def test_reports_progress_as_it_goes(self):
         plan = embed.SearchPlan(config(slots=[

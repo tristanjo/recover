@@ -323,17 +323,32 @@ def run(plan, mnemonic, progress=None, abort=None, threads=None, skip=0):
     if not remaining:
         return SearchResult(tried=0, error="nothing left to search: skip is past the end")
 
+    # Counted here rather than taken from btcrpass, because the two count different
+    # things. btcrpass reports passwords tried -- every typo variant of every candidate --
+    # while `remaining` is candidates. With typos on, one is hundreds of times the other,
+    # and a progress bar built from both read "78256.4%" over "122,080 / 156".
+    #
+    # The exact expanded total is not available: --no-eta is passed on purpose, since
+    # counting a hundred million passwords just to draw a bar costs more than the bar is
+    # worth. So progress is reported in the unit this side knows exactly.
+    drawn = [0]
+
     def candidates():
-        return plan.grammar.generate(skip=start + skip, limit=remaining)
+        for candidate in plan.grammar.generate(skip=start + skip, limit=remaining):
+            drawn[0] += 1
+            yield candidate
 
     captured = io.StringIO()
     started = time.monotonic()
     tried_holder = [0]
 
-    def on_progress(tried, _unused_total):
-        tried_holder[0] = tried
+    def on_progress(_tried_passwords, _unused_total):
+        # btcrpass reads ahead by a chunk per worker, so this can sit slightly in front of
+        # what has actually been tested. A fraction of a second at the chunk size used
+        # here, and never past the end.
+        tried_holder[0] = min(drawn[0], remaining)
         if progress:
-            progress(tried, remaining)
+            progress(tried_holder[0], remaining)
 
     _share_tk_root()
 
