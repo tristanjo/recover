@@ -96,6 +96,15 @@ wrong. There is an Edit menu now, and the word count follows a paste, which it d
 counter hung off KeyRelease and a paste produces no key event, so twelve words would sit in
 the field under a label reading "0 단어".
 
+**A button to empty the clipboard.** A seed phrase pasted in from a password manager or a
+note is still sitting there afterwards, where the next program to ask can read it. The
+button clears it and then checks whether it is actually empty before saying so — another
+program can take the clipboard straight back, and a button that reports success when it
+failed is worse than no button, because someone would stop worrying about it. Verified
+against `pbpaste`: the system pasteboard really is emptied. What it cannot reach is written
+next to it rather than left to be assumed — clipboard managers keep their own history, and
+macOS may already have handed the text to another Apple device.
+
 **Also:** the log drops advice nobody in a window can take (`--skip-pre-start`,
 `--mnemonic-length`, `--no-dupchecks`, the internal wallet class name) and keeps the two
 lines that matter — which crypto backend was chosen, and whether a word was substituted.

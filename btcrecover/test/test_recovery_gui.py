@@ -352,6 +352,46 @@ class Screens(unittest.TestCase):
         self.assertEqual(recovery_gui.check_mnemonic("")[0], "empty")
         self.assertEqual(recovery_gui.check_mnemonic(MNEMONIC.upper())[0], "ok")
 
+    def test_the_clipboard_can_be_emptied_and_says_whether_it_was(self):
+        """A pasted seed phrase is still in the clipboard afterwards.
+
+        The button reports what happened rather than claiming it: another program can take
+        the clipboard straight back, and one that says "비웠습니다" when it did not is worse
+        than no button, because someone would stop worrying about it.
+        """
+        self._load()
+        self.app.show_mnemonic()
+        self.app.clipboard_clear()
+        self.app.clipboard_append(MNEMONIC)
+        self.app.update()
+        self.app._clear_clipboard()
+        self.assertEqual(self.app.clip_status.cget("text"), "비웠습니다.")
+        self.assertEqual(str(self.app.clip_status.cget("foreground")), self.app.c["ok"])
+        with self.assertRaises(recovery_gui.tk.TclError):
+            self.app.clipboard_get()
+
+    def test_it_reports_a_clipboard_that_refilled(self):
+        self._load()
+        self.app.show_mnemonic()
+        original = self.app.clipboard_get
+        self.app.clipboard_get = lambda *a, **k: "누군가 다시 채움"
+        try:
+            self.app._clear_clipboard()
+        finally:
+            self.app.clipboard_get = original
+        self.assertIn("지우지 못했습니다", self.app.clip_status.cget("text"))
+        self.assertEqual(str(self.app.clip_status.cget("foreground")), self.app.c["bad"])
+
+    def test_the_screen_admits_what_clearing_cannot_reach(self):
+        # clipboard managers keep their own history, and macOS may already have handed the
+        # text to another device. Saying so is the difference between a tool and a promise.
+        self._load()
+        self.app.show_mnemonic()
+        self.app.update_idletasks()
+        screen = self._all_text()
+        self.assertIn("클립보드 기록을 따로 저장하는", screen)
+        self.assertIn("다른 애플 기기", screen)
+
     def test_the_word_count_follows_a_paste(self):
         """A pasted phrase must not leave the counter reading "0 단어".
 

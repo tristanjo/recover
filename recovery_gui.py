@@ -555,6 +555,14 @@ class RecoveryApp(tk.Tk):
         self.mnemonic_text.pack(fill="x", pady=(0, 6))
         self.mnemonic_text.focus_set()
 
+        tools = ttk.Frame(self.container)
+        tools.pack(fill="x", pady=(2, 4))
+        self.clip_button = ttk.Button(tools, text="클립보드 비우기",
+                                      command=self._clear_clipboard)
+        self.clip_button.pack(side="left")
+        self.clip_status = ttk.Label(tools, text="", foreground=self.c["muted"])
+        self.clip_status.pack(side="left", padx=(8, 0))
+
         status = ttk.Frame(self.container)
         status.pack(fill="x")
         self.word_count = ttk.Label(status, text="0 단어", foreground=self.c["muted"])
@@ -564,6 +572,11 @@ class RecoveryApp(tk.Tk):
         self.seed_status = ttk.Label(status, text="", font=self.bold)
         self.seed_status.pack(side="left")
         self.mnemonic_text.bind("<KeyRelease>", self._count_words)
+        ttk.Label(self.container, foreground=self.c["dim"], wraplength=640, justify="left",
+                  text="붙여넣기로 입력하셨다면 클립보드에 시드 문구가 그대로 남아 있습니다. "
+                       "위 버튼으로 비울 수 있지만, 클립보드 기록을 따로 저장하는 프로그램이나 "
+                       "다른 애플 기기로 이미 복사된 것까지는 지우지 못합니다."
+                  ).pack(anchor="w", pady=(6, 0))
         # Ctrl+V and the menu both raise this; without it a pasted phrase reads "0 단어"
         self.mnemonic_text.bind("<<Paste>>",
                                 lambda _e: self.after_idle(self._count_words_if_open))
@@ -638,6 +651,38 @@ class RecoveryApp(tk.Tk):
         # kept so _render_gate's callers have something to call; the decision moved to
         # start_search, where the seed phrase is actually about to be used
         return
+
+    def _clear_clipboard(self):
+        """Empty the clipboard, then check that it is actually empty and say which.
+
+        A seed phrase pasted in from a password manager or a note is still sitting in the
+        clipboard afterwards, where the next application to ask can read it. Clearing it is
+        one line; the reason this reports back rather than just claiming success is that
+        another program can take ownership straight back, and a button that says "지웠습니다"
+        when it did not is worse than no button.
+
+        What it cannot reach is said on screen rather than left for someone to assume:
+        clipboard managers keep their own history, and macOS may already have handed the
+        text to another Apple device.
+        """
+        try:
+            self.clipboard_clear()
+            self.update_idletasks()
+            try:
+                left = self.clipboard_get()
+            except tk.TclError:
+                left = ""
+        except tk.TclError:
+            self.clip_status.configure(text="클립보드에 접근하지 못했습니다.",
+                                       foreground=self.c["bad"])
+            return
+
+        if left.strip():
+            self.clip_status.configure(
+                text="지우지 못했습니다 — 다른 프로그램이 클립보드를 다시 채웠습니다.",
+                foreground=self.c["bad"])
+        else:
+            self.clip_status.configure(text="비웠습니다.", foreground=self.c["ok"])
 
     def _count_words(self, _event=None):
         text = self.mnemonic_text.get("1.0", "end")
