@@ -32,6 +32,14 @@ Both architectures are built. Rosetta would run an Intel binary on Apple Silicon
 fraction of the speed, on a job whose entire cost is speed — and a customer who downloads
 the wrong one gets a program that will not start and no explanation.
 
+The first attempt named `macos-13` for Intel, which was retired in December 2025. The job
+did not fail: it queued for forty minutes for a machine that was never coming, while the
+Windows job on the same commit finished in two. A workflow can be wrong in a way that
+produces no error at all, and a `timeout-minutes` does not help because the clock starts
+when a job begins, not when it is queued. Now `macos-15` and `macos-15-intel` — the latter
+being the last x86_64 image Actions will offer, retiring August 2027, which is recorded in
+the workflow so it is not discovered the same way.
+
 **Gatekeeper is the real obstacle, and it is not solved.** Without an Apple Developer ID the
 bundle is only ad-hoc signed; `spctl -a -t exec` rejects it, and macOS blocks the first
 launch with a message that reads like malware being caught. For a program whose whole

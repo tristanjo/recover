@@ -39,9 +39,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14      # Apple Silicon
+          - runner: macos-15            # Apple Silicon
             arch: arm64
-          - runner: macos-13      # Intel
+          # Intel needs its own label. This one is the last x86_64 image Actions will
+          # offer -- Apple has dropped the architecture, and GitHub retires this in
+          # August 2027. When it goes, so does the Intel build, unless it is
+          # cross-compiled or built somewhere else. Worth knowing before the runner
+          # simply stops existing, which is exactly how macos-13 was found: it was
+          # retired in December 2025 and the job queued for a machine that was never
+          # coming, with no error and no timeout.
+          - runner: macos-15-intel      # Intel, until August 2027
             arch: x86_64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
