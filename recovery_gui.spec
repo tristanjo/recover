@@ -31,6 +31,8 @@ a = Analysis(
            ("lib/bitcoinlib/config", "lib/bitcoinlib/config"),
            ("lib/bitcoinlib/data", "lib/bitcoinlib/data"),
            ("lib/bitcoinlib/wordlist", "lib/bitcoinlib/wordlist"),
+           # keyboard-adjacency maps, for "I might have hit the next key over"
+           ("typos", "typos"),
            # GPLv2 obliges us to ship these alongside the binary, and they are also the
            # first thing anyone auditing the folder should be able to find
            ("LICENSE.txt", "."),

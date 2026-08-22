@@ -83,6 +83,50 @@ not once per separator.
 This is why the candidate count is not the plain product of the slot sizes, and why
 `count()` sums over each subset of optional slots that could go empty.
 
+## Typos
+
+The grammar says what the passphrase was built from. Typos say the owner might not have
+typed it correctly, which is a different question and gets its own section in the config:
+
+```json
+"typos": {"max": 1, "case": true, "swap": true, "delete": true,
+          "capslock": false, "repeat": false, "keyboard": false}
+```
+
+btcrecover does the mistyping; this only translates. `max` becomes `--typos`, and each
+`true` becomes the matching `--typos-*` flag. Nothing is passed unless at least one kind is
+asked for, since `--typos` on its own is an error.
+
+`keyboard` uses `typos/us-with-shifts-map.txt`, resolved against the package rather than the
+working directory so a frozen build finds it. The unshifted `us-map.txt` is deliberately not
+used: it does nothing at all to a passphrase containing a capital — seven variants of
+`TREZOr` against thirty-four.
+
+### What each one costs
+
+Measured with `btcrecover --listpass`, not derived:
+
+| | `minji2014` (9 chars, 5 letters) | `비밀번호2024` (8 chars, no letters) |
+|---|---|---|
+| none | 1 | 1 |
+| `case` | 6 | **1** |
+| `capslock` | 2 | **1** |
+| `swap` | 9 | 8 |
+| `delete` | 10 | 9 |
+| `repeat` | 10 | 9 |
+| `keyboard` | 34 | 21 |
+| all five, `max: 1` | 33 | 24 |
+| all five, `max: 2` | 486 | 241 |
+| all five, `max: 3` | 4,222 | 1,360 |
+
+**`case` and `capslock` do nothing to Hangul**, which has no letter case. Offering them to a
+Korean passphrase costs nothing and gains nothing, so the diagnostic page disables them when
+the sample contains no Latin letters.
+
+The page's estimate is an upper bound: it counts every combination of up to `max` changes,
+while btcrecover discards variants that collide. On the nine-character sample that is 529
+against 486 at two typos. Quoting slightly long is the safe direction.
+
 ## Priority order
 
 Candidates are emitted in likelihood order by default. Right now that model is one rule:

@@ -17,6 +17,31 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
+## 2026-08-22 — Ask whether they typed it correctly
+
+**Changed:** `btcrecover/embed.py`, `webapp/diagnostic.html`, `recovery_gui.spec`
+
+btcrecover can search around a mistyping — a transposition, a missed character, a neighbouring
+key — and none of that was reachable from the config. It is now, as a `typos` section that
+embed translates into `--typos-*` flags. btcrecover does the work; this only asks the question.
+
+The diagnostic page asks it in the words someone would use ("옆 글자와 순서를 바꿔 쳤을 수
+있어요") rather than by flag name, and shows what each answer costs before it is chosen. The
+cost model comes from running `btcrecover --listpass` over sample passphrases, not from a
+formula, and is stated as an upper bound: 529 against a measured 486 at two typos.
+
+Two things fell out of measuring rather than assuming:
+
+* **`case` and `capslock` do nothing to Hangul.** No letter case exists there. The page
+  disables both when the sample has no Latin letters, instead of selling a Korean customer an
+  option that multiplies their search by one.
+* **`us-map.txt` does nothing to a passphrase with a capital in it** — seven variants of
+  `TREZOr` against thirty-four for the shifted map. A passphrase is rarely all lower case, so
+  `us-with-shifts-map.txt` is the one used, resolved against the package so a frozen build
+  finds it, and now bundled.
+
+---
+
 ## 2026-08-22 — Let the browser enforce the diagnostic page's promise
 
 **Added:** `webapp/_headers`, `webapp/README.md`

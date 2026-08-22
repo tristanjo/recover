@@ -160,6 +160,60 @@ class Searching(unittest.TestCase):
         self.assertIsNotNone(result.error)
 
 
+class Typos(unittest.TestCase):
+    """Mistyping is btcrecover's job; embed only has to ask for it correctly."""
+
+    def test_nothing_asked_for_means_no_arguments(self):
+        # --typos on its own is an error, so an empty answer must produce an empty list
+        self.assertEqual(embed._typo_flags({}), [])
+        self.assertEqual(embed._typo_flags({"max": 2}), [])
+        self.assertEqual(embed._typo_flags({"max": 0, "case": True}), [])
+
+    def test_translates_each_kind(self):
+        self.assertEqual(embed._typo_flags({"case": True, "swap": True}),
+                         ["--typos", "1", "--typos-case", "--typos-swap"])
+        self.assertEqual(embed._typo_flags({"max": 3, "delete": True}),
+                         ["--typos", "3", "--typos-delete"])
+
+    def test_the_keyboard_map_is_found_from_the_package(self):
+        # not from the working directory: a frozen build starts wherever the user is
+        flags = embed._typo_flags({"keyboard": True})
+        self.assertEqual(flags[-2], "--typos-map")
+        self.assertTrue(os.path.isabs(flags[-1]))
+        self.assertTrue(os.path.exists(flags[-1]), flags[-1])
+
+    def test_the_shifted_map_is_the_one_used(self):
+        """us-map.txt covers unshifted keys only and does nothing to a passphrase with a
+        capital in it -- seven variants of "TREZOr" against thirty-four."""
+        self.assertIn("us-with-shifts-map", embed._typo_flags({"keyboard": True})[-1])
+
+    def test_a_mistyped_passphrase_is_recovered(self):
+        """Each kind is paired with a mistyping it can actually undo.
+
+        The real passphrase ends 2024. Transposing its last two digits gives 2042, which
+        only --typos-swap reaches; typing an extra 4 gives 20244, which only --typos-delete
+        removes. Pairing a kind with a mistyping it cannot fix tests nothing.
+        """
+        for mistyped, kind in (("2042", "swap"), ("20244", "delete")):
+            with self.subTest(mistyped=mistyped, kind=kind):
+                cfg = config(slots=[{"type": "words", "candidates": ["비밀번호"], "cases": ["asis"]},
+                                    {"type": "digits", "candidates": [mistyped]}])
+                self.assertFalse(embed.run(embed.SearchPlan(cfg), MNEMONIC).found,
+                                 "should not be found without the typo option")
+                cfg["typos"] = {"max": 1, kind: True}
+                result = embed.run(embed.SearchPlan(cfg), MNEMONIC)
+                self.assertTrue(result.found, result.error or result.log[-400:])
+                self.assertEqual(result.passphrase, PASSPHRASE)
+
+    def test_typo_flags_reach_the_command_line(self):
+        cfg = config()
+        cfg["typos"] = {"max": 2, "case": True}
+        argv = embed.SearchPlan(cfg)._argv("some words")
+        self.assertIn("--typos", argv)
+        self.assertEqual(argv[argv.index("--typos") + 1], "2")
+        self.assertIn("--typos-case", argv)
+
+
 class Failures(unittest.TestCase):
     """btcrpass reports bad input by calling sys.exit; a GUI must get a message instead."""
 

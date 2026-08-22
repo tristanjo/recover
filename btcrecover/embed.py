@@ -92,6 +92,45 @@ def _ensure_streams():
                     pass
 
 
+# What each answer in the config means to btcrecover. Mistyping is btcrecover's job, not
+# this module's -- these only translate.
+TYPO_FLAGS = {
+    "case":     ["--typos-case"],       # a letter in the wrong case
+    "capslock": ["--typos-capslock"],   # caps lock left on
+    "swap":     ["--typos-swap"],       # two neighbours transposed
+    "repeat":   ["--typos-repeat"],     # a character typed twice
+    "delete":   ["--typos-delete"],     # a character missed
+    "keyboard": None,   # a neighbouring key; the map file is located at call time
+}
+
+# Resolved against this package rather than the working directory: a frozen build is
+# started from wherever the user happens to be, and PyInstaller unpacks the tree next to
+# the modules, not next to the shortcut that launched it.
+# us-map.txt covers unshifted keys only, so it does nothing at all to a passphrase with a
+# capital in it -- measured: seven variants of "TREZOr" against thirty-four. The shifted map
+# is the one to use for a passphrase, which is rarely all lower case.
+KEYBOARD_MAP = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "typos", "us-with-shifts-map.txt")
+
+
+def _typo_flags(spec):
+    """Translate the config's typo answers into btcrecover arguments.
+
+    Nothing is passed unless at least one kind is asked for: --typos on its own is an
+    error, and asking for none should mean none rather than an argument list that fails.
+    """
+    chosen = []
+    for name, flags in TYPO_FLAGS.items():
+        if not spec.get(name):
+            continue
+        chosen += flags if flags else ["--typos-map", KEYBOARD_MAP]
+    limit = spec.get("max", 1)
+    limit = 1 if limit is None else int(limit)
+    if not chosen or limit < 1:
+        return []
+    return ["--typos", str(limit), *chosen]
+
+
 class SearchPlan:
     """Everything from config.json that the search needs -- and nothing about the seed."""
 
@@ -112,6 +151,7 @@ class SearchPlan:
 
         self.normalizations = list(self.grammar.normalizations)
         self.language = wallet.get("language")
+        self.typos = _typo_flags(config.get("typos") or {})
 
         if not self.addresses:
             raise GrammarError("config lists no wallet address; without one there is "
@@ -143,6 +183,7 @@ class SearchPlan:
             "--dsw",             # the host is responsible for its own security notices
             "--skip-pre-start",
         ]
+        argv += self.typos
         if self.language:
             argv += ["--language", self.language]
         if threads:
