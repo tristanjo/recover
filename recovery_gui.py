@@ -512,9 +512,31 @@ def self_test_from_terminal(report_path=None):
     os._exit(code)
 
 
+USAGE = """사용법: passphrase-recovery [옵션]
+
+옵션 없이 실행하면 복구 창이 열립니다.
+
+  --self-test        공개 BIP39 테스트 벡터로 알려진 패스프레이즈를 찾아, 프로그램이
+                     제대로 동작하는지 확인합니다. 통과하면 0, 실패하면 0이 아닌 값으로
+                     종료합니다.
+  --report FILE      자가검증 결과를 파일로 기록합니다. 창만 있는 Windows 빌드는 출력할
+                     콘솔이 없으므로, 그런 빌드에서는 이 파일이 유일한 상세 기록입니다.
+  -h, --help         이 도움말을 출력합니다.
+
+Windows 에서 --self-test 를 셸에서 실행하면 프롬프트가 곧바로 돌아옵니다. 셸이 창 있는
+프로그램을 기다리지 않기 때문이며, 고장이 아닙니다. --report 로 지정한 파일이 생기기를
+기다리거나, 창의 첫 화면에 있는 자가검증 버튼을 쓰세요."""
+
+
 def main():
     embed.prepare_frozen_start()   # must come first; see btcrecover/embed.py
     argv = sys.argv[1:]
+    # Answer --help without opening anything. run-all-tests.py runs every script in the
+    # repository this way and accepts only a clean exit; falling through to the window
+    # instead means a headless machine fails and a desktop one hangs holding it open.
+    if "-h" in argv or "--help" in argv:
+        print(USAGE)
+        sys.exit(0)
     if "--self-test" in argv:
         report = None
         if "--report" in argv:

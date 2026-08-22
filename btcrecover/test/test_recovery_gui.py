@@ -122,6 +122,19 @@ class Helpers(unittest.TestCase):
         self.assertIn(recovery_gui.has_default_route(), (True, False))
         self.assertLess(time.monotonic() - started, 2.0)
 
+    def test_help_exits_cleanly_without_opening_a_window(self):
+        """run-all-tests.py runs every script in the repository with --help and accepts
+        only a clean exit. Falling through to the window instead fails on a headless
+        machine and hangs on a desktop one, holding the window open forever."""
+        import subprocess
+        root = os.path.join(os.path.dirname(__file__), "..", "..")
+        for flag in ("--help", "-h"):
+            with self.subTest(flag):
+                done = subprocess.run([sys.executable, "recovery_gui.py", flag],
+                                      cwd=root, capture_output=True, text=True, timeout=120)
+                self.assertEqual(done.returncode, 0, done.stderr[-2000:])
+                self.assertIn("--self-test", done.stdout)
+
     def test_the_self_test_uses_the_published_bip39_vector(self):
         plan = embed.SearchPlan(recovery_gui.SELF_TEST["config"])
         self.assertIn(recovery_gui.SELF_TEST["passphrase"], list(plan.grammar.generate()))
