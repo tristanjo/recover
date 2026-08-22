@@ -247,9 +247,11 @@ class RecoveryApp(tk.Tk):
         self._window = self._viewport.create_window((0, 0), window=container, anchor="nw")
         container.bind("<Configure>", self._content_resized)
         self._viewport.bind("<Configure>", self._viewport_resized)
-        self.bind_all("<MouseWheel>", self._wheel)
-        self.bind_all("<Button-4>", self._wheel)
-        self.bind_all("<Button-5>", self._wheel)
+        for target in (self, self._viewport, container):
+            for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                # bind_all catches most of it; the viewport and the content are bound too
+                # so a platform where the "all" bindtag is preempted still scrolls.
+                (target.bind_all if target is self else target.bind)(sequence, self._wheel)
 
         self.container = container
         self.show_checks()

@@ -352,29 +352,58 @@ class Screens(unittest.TestCase):
         self.assertEqual(recovery_gui.check_mnemonic("")[0], "empty")
         self.assertEqual(recovery_gui.check_mnemonic(MNEMONIC.upper())[0], "ok")
 
-    def test_the_wheel_scrolls_from_anywhere_not_only_over_the_bar(self):
-        """The first version asked whether the scrollbar was on screen.
+    def test_the_wheel_handler_scrolls_when_there_is_somewhere_to_go(self):
+        """Tests the decision, not Tk's event delivery.
 
-        It is packed and unpacked as screens change, and a wheel event arriving while it was
-        not there did nothing -- so scrolling appeared to work only when the pointer was
-        over the bar itself. Ask the viewport whether it can move instead.
+        The first version generated a synthetic <MouseWheel> and asserted the view moved.
+        That passed here and failed on Windows -- where a synthetic wheel event does not
+        reach the handler -- so it was measuring the toolkit rather than this code, and the
+        failure said nothing about whether scrolling works for a person with a mouse.
+
+        What is worth pinning down is the rule: move when there is somewhere to go, do
+        nothing when the screen already fits.
         """
+        class Wheel:
+            num, delta = "??", -120
+
         self.app.geometry("760x400")
         self.app.update_idletasks()
         self._load()
         self.app.show_mnemonic()
         self.app.update_idletasks()
         try:
-            if self.app._viewport.yview()[1] >= 1.0:
+            first, last = self.app._viewport.yview()
+            if last >= 1.0:
                 self.skipTest("this screen fits; nothing to scroll")
             before = self.app._viewport.yview()[0]
-            self.app.container.event_generate("<MouseWheel>", delta=-120, x=10, y=10)
-            self.app.update()
-            self.assertGreater(self.app._viewport.yview()[0], before,
-                               "the wheel did nothing away from the scrollbar")
+            self.app._wheel(Wheel())
+            self.app.update_idletasks()
+            self.assertGreater(self.app._viewport.yview()[0], before)
         finally:
             self.app.geometry("760x680")
             self.app.update_idletasks()
+
+    def test_the_wheel_does_nothing_when_the_screen_fits(self):
+        class Wheel:
+            num, delta = "??", -120
+
+        moved = []
+        original = self.app._viewport.yview_scroll
+        self.app._viewport.yview_scroll = lambda *a: moved.append(a)
+        self.app._viewport.yview = lambda: (0.0, 1.0)
+        try:
+            self.app._wheel(Wheel())
+        finally:
+            self.app._viewport.yview_scroll = original
+            del self.app._viewport.yview
+        self.assertFalse(moved, "scrolled a screen that was already whole")
+
+    def test_the_wheel_is_bound_beyond_the_scrollbar(self):
+        # bind_all catches most of it; the viewport and the content are bound too, so a
+        # platform where the "all" bindtag is preempted still scrolls
+        source = read_source()
+        self.assertIn("bind_all", source)
+        self.assertIn("self._viewport, container", source)
 
     def test_the_scrollbar_only_appears_when_it_is_needed(self):
         # a bar that is always there says every screen might be hiding something

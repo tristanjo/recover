@@ -77,13 +77,26 @@ Binding `<Command-v>` unconditionally put paste on Alt+V on Windows, beside a Ct
 already handles, and took Alt+V from whatever else wanted it. Bound on macOS only now, which
 is where it was needed: Tk's own Text bindings already cover Ctrl+V.
 
-The clipboard test is the likely cause of the failure itself. It asserted that clearing
-leaves the clipboard empty, which is true here and not guaranteed on a CI image where
-something else may own it — the button already reports that case rather than hiding it, so
-the test now accepts either answer and checks the right message for each.
+The clipboard test was made tolerant of a CI image where something else owns the clipboard,
+which the button already reports rather than hides.
 
-The Windows test step runs verbose now. Not being able to read a failing build's log without
-credentials made this guesswork; the next one will at least name the test in the summary.
+**Neither of those was the failure.** Two guesses, two misses, and the log needs credentials
+to read — so the run was opened by hand, and it named the test at once:
+
+    FAIL: test_the_wheel_scrolls_from_anywhere_not_only_over_the_bar
+    AssertionError: 0.0 not greater than 0.0
+
+The test generated a synthetic `<MouseWheel>` and asserted the view moved. On Windows a
+synthetic wheel event does not reach the handler, so the test was measuring Tk's event
+delivery rather than this code — and its failure said nothing about whether scrolling works
+for someone with a mouse. It now checks the decision instead: move when there is somewhere
+to go, do nothing when the screen already fits.
+
+The wheel is also bound on the viewport and the content, not only through `bind_all`, so a
+platform where the "all" bindtag is preempted still scrolls. That part is unverified on
+Windows; only a person with a mouse there can confirm it.
+
+The Windows test step runs verbose now, which is how the name came out of the log at all.
 
 ---
 
