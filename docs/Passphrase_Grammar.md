@@ -83,6 +83,39 @@ not once per separator.
 This is why the candidate count is not the plain product of the slot sizes, and why
 `count()` sums over each subset of optional slots that could go empty.
 
+## Some of these words, not all of them
+
+"It was two or three of these five, I forget which" is a different shape from a slot with
+one value: the passphrase ends up with as many parts as were chosen. A `pool` slot says so.
+
+```json
+{"type": "pool", "candidates": ["민지", "사랑", "2014", "우리집"], "choose": [2, 3]}
+```
+
+gives every 2- and 3-word subset in the order the words were given — 10 of them here — and
+each subset joins the candidate as **separate parts**, so separators go between them and
+`permute_order` reorders across them. It is not one slot holding a joined string.
+
+`choose` is capped at the number of words given, so `[3, 5]` over three words means three.
+Asking for more than exist at the low end is an error rather than an empty search. At most
+16 candidates, which bounds the subsets it materializes.
+
+Each subset size is its own tier, which is what keeps the number of parts fixed within a
+block — and therefore keeps `count()` a multiplication and `--skip` a division.
+
+Case variants and `keystrokes` do not apply inside a pool: the words go in as given. Someone
+who needs both can use the manual editor.
+
+### Measured
+
+A wallet whose passphrase was `사랑2014`, with an owner who remembers four words but not
+which two they used:
+
+| | candidates | result |
+|---|---|---|
+| assuming all four were used | 8 | not found |
+| two or three of the four | 20 | **found**, reported as NFC |
+
 ## When the IME was never switched on
 
 Korean is typed by pressing Latin keys and letting the input method assemble syllables from

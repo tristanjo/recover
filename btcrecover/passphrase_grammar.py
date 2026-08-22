@@ -158,6 +158,60 @@ class _DigitsSlot(_Slot):
         return [years, [r for r in rest if r[1] > r[0]]]
 
 
+class _PoolSlot(_Slot):
+    """Some of these words, not necessarily all of them.
+
+    "It was two or three of these five, I forget which" is not a slot with one value -- the
+    passphrase ends up with as many parts as were chosen. Each value here is therefore a
+    tuple of words rather than a string, and the parts join with everything else.
+
+    Subsets are materialized: the whole point is a handful of remembered words, and the cap
+    below bounds that at a few tens of thousands of tuples.
+    """
+
+    MAX_CANDIDATES = 16
+
+    def __init__(self, words, choose, optional=False):
+        super().__init__(optional)
+        seen, ordered = set(), []
+        for w in words:
+            if w and w not in seen:
+                seen.add(w)
+                ordered.append(w)
+        if len(ordered) > self.MAX_CANDIDATES:
+            raise GrammarError("a pool takes at most {} words, got {}"
+                               .format(self.MAX_CANDIDATES, len(ordered)))
+        low, high = int(choose[0]), int(choose[1])
+        if not 1 <= low <= high:
+            raise GrammarError("pool 'choose' must be [min, max] with 1 <= min <= max, got "
+                               "[{}, {}]".format(low, high))
+        high = min(high, len(ordered))
+        if low > high:
+            raise GrammarError("pool asks for at least {} words but only {} were given"
+                               .format(low, len(ordered)))
+
+        # Grouped by how many words were taken, smallest first, and the ranges recorded so
+        # each size can be its own tier -- which is what keeps the part count fixed within
+        # a block, and so keeps --skip a division.
+        self.values, self.sizes = [], []
+        for k in range(low, high + 1):
+            start = len(self.values)
+            self.values.extend(itertools.combinations(ordered, k))
+            self.sizes.append((k, start, len(self.values)))
+        self.words = ordered
+        self.nonempty_len = len(self.values)
+
+    def value_at(self, i):
+        return self.values[i]
+
+    def priority_tiers(self):
+        return [[(start, stop)] for _, start, stop in self.sizes]
+
+    def tiers_by_size(self):
+        """(parts contributed, index ranges) for each subset size, smallest first."""
+        return [(k, [(start, stop)]) for k, start, stop in self.sizes]
+
+
 def _build_slot(spec):
     """One slot of a config.json `passphrase.slots` array."""
     if not isinstance(spec, dict):
@@ -184,6 +238,10 @@ def _build_slot(spec):
                 values.append(to_keystrokes(w))
         return _ListSlot(values, optional)
 
+    if kind == "pool":
+        return _PoolSlot([str(w) for w in spec.get("candidates", []) if w],
+                         spec.get("choose") or [1, 1], optional)
+
     if kind == "digits":
         if "length" in spec:
             length = spec["length"]
@@ -195,7 +253,7 @@ def _build_slot(spec):
     if kind in ("symbols", "fixed"):
         return _ListSlot([str(v) for v in spec.get("candidates", [])], optional)
 
-    raise GrammarError("unknown slot type '{}'; expected words, digits, symbols or fixed"
+    raise GrammarError("unknown slot type '{}'; expected words, pool, digits, symbols or fixed"
                        .format(kind))
 
 
@@ -247,20 +305,16 @@ class PassphraseGrammar:
     def count(self):
         """Exact number of candidates `generate()` will yield.
 
-        Assumes no two slots can produce the same string; where they can, permuting
-        them produces a duplicate and the true number is slightly lower.
+        Every block has a fixed number of parts, so each contributes a product rather than
+        an enumeration. Assumes no two slots can produce the same string; where they can,
+        permuting them makes a duplicate and the true number is slightly lower.
         """
-        optional = [i for i, s in enumerate(self.slots) if s.optional]
         total = 0
-        # Each subset of the optional slots that goes empty gives a different part
-        # count, and so a different number of orderings and separator placements.
-        for empties in range(len(optional) + 1):
-            for empty_set in itertools.combinations(optional, empties):
-                ways = 1
-                for i, slot in enumerate(self.slots):
-                    if i not in empty_set:
-                        ways *= slot.nonempty_len
-                total += ways * self._outputs_for(len(self.slots) - empties)
+        for _ranges, parts, sizes in self._blocks():
+            assignments = 1
+            for size in sizes:
+                assignments *= size
+            total += assignments * self._outputs_for(parts)
         return total
 
     def assignment_count(self):
@@ -273,13 +327,25 @@ class PassphraseGrammar:
     # ---- priority order -------------------------------------------------
 
     def _slot_tiers(self, slot):
-        """(index ranges, is-the-empty-tier) for each tier of `slot`, in trying order."""
-        if not self.priority:
-            return [([(0, len(slot))], False)]   # one flat tier; emptiness varies inside it
-        tiers = [(ranges, False) for ranges in slot.priority_tiers()]
+        """(index ranges, parts contributed) for each tier of `slot`, in trying order.
+
+        Every tier declares how many parts it puts into a candidate: one for an ordinary
+        slot, none for the empty tier of an optional one, and k for a pool tier that takes
+        k words. Fixing that per tier is what lets `generate` divide its way into a block
+        instead of walking there, and what lets `count` multiply instead of enumerate.
+
+        Pools and optional slots are tiered whether or not priority ordering was asked for,
+        because the arithmetic depends on it; priority only decides the order of the rest.
+        """
+        if isinstance(slot, _PoolSlot):
+            tiers = [(ranges, k) for k, ranges in slot.tiers_by_size()]
+        elif self.priority:
+            tiers = [(ranges, 1) for ranges in slot.priority_tiers()]
+        else:
+            tiers = [([(0, slot.nonempty_len)], 1)]
         if slot.optional:
             # a slot the user is unsure about is tried present before absent
-            tiers.append(([(slot.nonempty_len, slot.nonempty_len + 1)], True))
+            tiers.append(([(slot.nonempty_len, slot.nonempty_len + 1)], 0))
         return tiers
 
     @staticmethod
@@ -310,9 +376,9 @@ class PassphraseGrammar:
             for vector in itertools.product(*(range(c) for c in counts)):
                 if sum(vector) != cost:
                     continue
-                ranges  = [all_tiers[i][t][0] for i, t in enumerate(vector)]
-                empties = [all_tiers[i][t][1] for i, t in enumerate(vector)]
-                yield ranges, empties, [self._tier_size(r) for r in ranges]
+                ranges = [all_tiers[i][t][0] for i, t in enumerate(vector)]
+                parts  = sum(all_tiers[i][t][1] for i, t in enumerate(vector))
+                yield ranges, parts, [self._tier_size(r) for r in ranges]
 
     # ---- generation -----------------------------------------------------
 
@@ -325,8 +391,17 @@ class PassphraseGrammar:
         return values
 
     def _expand(self, values):
-        """Every candidate one assignment produces."""
-        parts = [v for v in values if v]
+        """Every candidate one assignment produces.
+
+        A pool slot hands back a tuple of words, which join the candidate as separate parts
+        rather than as one -- separators go between them and ordering applies across them.
+        """
+        parts = []
+        for v in values:
+            if isinstance(v, tuple):
+                parts.extend(p for p in v if p)
+            elif v:
+                parts.append(v)
         if not parts:
             return
         orders = itertools.permutations(parts) if (self.permute and len(parts) > 1) else (tuple(parts),)
@@ -348,42 +423,27 @@ class PassphraseGrammar:
         if skip < 0:
             raise ValueError("skip must be >= 0")
         produced = 0
-        flexible_emptiness = not self.priority and any(s.optional for s in self.slots)
 
-        for ranges, empties, sizes in self._blocks():
+        for ranges, parts, sizes in self._blocks():
             assignments = 1
             for size in sizes:
                 assignments *= size
-            if not assignments:
+            per_assignment = self._outputs_for(parts)
+            if not assignments or not per_assignment:
+                continue          # an empty tier set, or every slot in this block is empty
+
+            block_total = assignments * per_assignment
+            if skip >= block_total:
+                skip -= block_total
                 continue
 
-            # Outputs per assignment, where the block fixes it. Only a flat tier holding
-            # both real values and the empty one leaves it varying.
-            per_assignment = None
-            if not flexible_emptiness:
-                per_assignment = self._outputs_for(len(self.slots) - sum(empties))
-                if not per_assignment:
-                    continue          # every slot in this block is empty
-                block_total = assignments * per_assignment
-                if skip >= block_total:
-                    skip -= block_total
-                    continue
-
             index = 0
-            if per_assignment and skip:
+            if skip:
                 index, skip = divmod(skip, per_assignment)
 
             while index < assignments:
                 values = self._assignment(ranges, sizes, index)
                 index += 1
-                if skip and not per_assignment:
-                    num_parts = sum(1 for v in values if v)
-                    if not num_parts:
-                        continue
-                    here = self._outputs_for(num_parts)
-                    if here <= skip:
-                        skip -= here
-                        continue
                 for candidate in self._expand(values):
                     if skip:
                         skip -= 1

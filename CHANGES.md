@@ -17,6 +17,29 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
+## 2026-08-22 — Some of these words, not all of them
+
+**Changed:** `btcrecover/passphrase_grammar.py`, `webapp/diagnostic.html`
+
+"It was two or three of these five, I forget which" could not be expressed. A `pool` slot
+takes a set of words and a `choose` range, and hands back each subset as **separate parts**,
+so separators go between them and reordering applies across them.
+
+Measured against a wallet whose passphrase was `사랑2014`, with an owner who remembers four
+words but not which two: eight candidates and not found when assuming all four were used,
+twenty candidates and found when asking for two or three of them.
+
+This simplified the engine rather than complicating it. A pool contributes a varying number
+of parts, which broke the assumption that a block's part count is fixed — so each subset size
+became its own tier, and every tier now declares what it contributes. That removed the
+special case for optional slots entirely: `count()` is a multiplication over blocks instead of
+an enumeration over subsets, and `--skip` is always a division, where before it walked
+whenever a grammar had an optional slot and priority ordering was off.
+
+Case variants and `keystrokes` do not apply inside a pool; the words go in as given.
+
+---
+
 ## 2026-08-22 — Recover a passphrase typed with the IME switched off
 
 **Added:** `btcrecover/hangul_keys.py`, `btcrecover/test/test_hangul_keys.py`

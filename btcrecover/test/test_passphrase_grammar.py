@@ -51,6 +51,9 @@ def digits(lo, hi, optional=False):
 def digit_list(candidates, optional=False):
     return {"type": "digits", "candidates": list(candidates), "optional": optional}
 
+def pool(candidates, choose, optional=False):
+    return {"type": "pool", "candidates": list(candidates), "choose": list(choose), "optional": optional}
+
 def symbols(candidates, optional=False):
     return {"type": "symbols", "candidates": list(candidates), "optional": optional}
 
@@ -96,6 +99,76 @@ class CountMatchesGeneration(unittest.TestCase):
         # a lone part has nowhere to put a separator, so three separators still give one candidate
         g = grammar([words(["solo"])], ["", "-", "_"])
         self.assertEqual(list(g.generate()), ["solo"])
+
+
+class Pools(unittest.TestCase):
+    """"It was two or three of these five, I forget which."
+
+    A pool contributes as many parts as were taken, so separators go between them and any
+    reordering applies across them -- it is not one slot holding a joined string.
+    """
+
+    def test_takes_a_subset_in_the_order_given(self):
+        g = grammar([pool(["민지", "사랑", "2014"], [2, 2])])
+        self.assertEqual(list(g.generate()), ["민지사랑", "민지2014", "사랑2014"])
+
+    def test_a_range_of_sizes(self):
+        g = grammar([pool(["a", "b", "c"], [1, 3])])
+        self.assertEqual(list(g.generate()), ["a", "b", "c", "ab", "ac", "bc", "abc"])
+
+    def test_separators_go_between_the_chosen_words(self):
+        g = grammar([pool(["a", "b"], [2, 2])], ["", "-"])
+        self.assertEqual(list(g.generate()), ["ab", "a-b"])
+
+    def test_reordering_applies_across_the_pool(self):
+        g = grammar([pool(["a", "b"], [2, 2])], ["-"], permute=True)
+        self.assertEqual(sorted(g.generate()), ["a-b", "b-a"])
+
+    def test_counts_match_generation(self):
+        shapes = [
+            [pool(["a", "b", "c"], [1, 3])],
+            [pool(["a", "b"], [1, 2]), digits(1, 1)],
+            [pool(["a", "b"], [1, 2], optional=True), digits(1, 1)],
+            [pool(["a", "b", "c"], [2, 3]), symbols(["!"], optional=True)],
+        ]
+        for slots in shapes:
+            for separators, permute in ((("",), False), (("", "-"), False), (("-",), True)):
+                with self.subTest(slots=len(slots), seps=len(separators), permute=permute):
+                    g = grammar(slots, separators, permute)
+                    produced = list(g.generate())
+                    self.assertEqual(g.count(), len(produced))
+                    self.assertEqual(len(produced), len(set(produced)))
+
+    def test_skip_resumes(self):
+        g = grammar([pool(["a", "b", "c"], [1, 3]), digits(1, 2)], ["", "-"], permute=True)
+        full = list(g.generate())
+        for k in (0, 1, 17, len(full) // 2, len(full) - 1, len(full)):
+            with self.subTest(skip=k):
+                self.assertEqual(list(g.generate(skip=k)), full[k:])
+
+    def test_more_words_asked_for_than_given(self):
+        # "at least four of these two" cannot be satisfied and should say so
+        with self.assertRaises(GrammarError):
+            grammar([pool(["a", "b"], [4, 5])])
+
+    def test_asking_for_more_than_there_are_is_capped(self):
+        # "up to five of these three" means up to three
+        g = grammar([pool(["a", "b", "c"], [3, 5])])
+        self.assertEqual(list(g.generate()), ["abc"])
+
+    def test_rejects_a_bad_range(self):
+        for bad in ([0, 2], [3, 1]):
+            with self.subTest(bad):
+                with self.assertRaises(GrammarError):
+                    grammar([pool(["a", "b", "c"], bad)])
+
+    def test_refuses_an_unreasonable_number_of_words(self):
+        with self.assertRaises(GrammarError):
+            grammar([pool([str(i) for i in range(20)], [1, 2])])
+
+    def test_duplicates_are_dropped(self):
+        g = grammar([pool(["a", "a", "b"], [2, 2])])
+        self.assertEqual(list(g.generate()), ["ab"])
 
 
 class WebToolAgreement(unittest.TestCase):
