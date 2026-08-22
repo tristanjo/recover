@@ -17,6 +17,18 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
+## Keystone, and steel
+
+The list of hardware wallets that support a BIP39 passphrase now names Keystone, and the
+last step says a steel backup as well as paper -- paper is the thing that burns with the
+house the seed was protecting against.
+
+This advice exists twice, in this program's success screen and on the diagnostic page in
+its own repository, and it is the safety-critical part: a device named on one and not the
+other sends somebody to buy hardware that cannot restore their wallet. The page's tests
+now read both files and fail if the two lists disagree, which was checked by removing
+Keystone from each side in turn.
+
 ## Cmd+V, and the moment of success
 
 Right-click pasted; Cmd+V did not, in the one field where typing by hand is worst. The

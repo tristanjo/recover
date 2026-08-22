@@ -1202,7 +1202,7 @@ class RecoveryApp(tk.Tk):
                 "     하드웨어 지갑과 연동된 휴대폰 앱에서 거래를 만들어 3번 주소로\n"
                 "     자금 전부를 한 번에 보냅니다. 서명은 하드웨어 지갑 안에서 이뤄지고,\n"
                 "     개인키는 앱으로 전달되지 않습니다.\n"
-                "5.  새 시드 문구를 종이에 적어 보관합니다."
+                "5.  새 시드 문구를 종이나 안전하게 보존 가능한 스틸 제품에 적어 보관합니다."
             )).pack(anchor="w", pady=(6, 0))
 
             # The device that broadcasts never sees a private key, so it has nothing to
@@ -1227,8 +1227,8 @@ class RecoveryApp(tk.Tk):
                 "그것이 이 컴퓨터일 필요는 "
                 "없습니다. 하드웨어 지갑을 쓰면 서명이 기기 안에서 끝나므로 시드 문구가 인터넷에 "
                 "연결된 기기에 올라가지 않습니다. BIP39 패스프레이즈를 지원하는 기기여야 합니다 "
-                "\u2014 Ledger, Trezor, ColdCard 모두 지원합니다. 중간에 다른 지갑을 거치지 "
-                "말고 최종 주소로 한 번에 보내세요."
+                "\u2014 Keystone, Ledger, Trezor, ColdCard 모두 지원합니다. "
+                "중간에 다른 지갑을 거치지 말고 최종 주소로 한 번에 보내세요."
             )).pack(anchor="w", pady=(8, 0))
 
             # Waiting for hardware to arrive is not free: if the seed did leak, the race is
