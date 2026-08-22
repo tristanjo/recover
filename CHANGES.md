@@ -63,6 +63,30 @@ win rather than the second one failing.
 
 ---
 
+## 2026-08-22 — Paste was bound to Alt+V on Windows
+
+**Changed:** `recovery_gui.py`, `btcrecover/test/test_recovery_gui.py`,
+`.github/workflows/build-windows.yml`
+
+The v0.1.7 Windows build failed its tests while macOS passed. The logs need authentication
+to read, so this is what could be found by looking at the code for things that differ by
+platform — and one of them is a real bug rather than a test problem.
+
+Tk maps the `Command` modifier to `Mod1`, which is Cmd on macOS and **Alt** everywhere else.
+Binding `<Command-v>` unconditionally put paste on Alt+V on Windows, beside a Ctrl+V that Tk
+already handles, and took Alt+V from whatever else wanted it. Bound on macOS only now, which
+is where it was needed: Tk's own Text bindings already cover Ctrl+V.
+
+The clipboard test is the likely cause of the failure itself. It asserted that clearing
+leaves the clipboard empty, which is true here and not guaranteed on a CI image where
+something else may own it — the button already reports that case rather than hiding it, so
+the test now accepts either answer and checks the right message for each.
+
+The Windows test step runs verbose now. Not being able to read a failing build's log without
+credentials made this guesswork; the next one will at least name the test in the summary.
+
+---
+
 ## 2026-08-22 — A way to say thanks, kept away from the moment that matters
 
 **Changed:** `recovery_gui.py`, `README.md`

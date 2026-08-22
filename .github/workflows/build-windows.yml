@@ -98,7 +98,7 @@ jobs:
           python -m unittest btcrecover.test.test_cjk_passphrase
           python -m unittest btcrecover.test.test_hangul_keys
           python -m unittest btcrecover.test.test_embed
-          python -m unittest btcrecover.test.test_recovery_gui
+          python -m unittest -v btcrecover.test.test_recovery_gui
 
       - name: Anchor the build clock to the commit
         # Two builds of one commit should have a chance of matching byte for byte, which

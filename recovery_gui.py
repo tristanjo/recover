@@ -811,13 +811,17 @@ class RecoveryApp(tk.Tk):
         The menu bar alone was not enough either; its accelerators are labels, not
         bindings. These are the bindings.
         """
-        for sequence, event in (("<Command-v>", "<<Paste>>"), ("<Command-V>", "<<Paste>>"),
-                                ("<Command-c>", "<<Copy>>"), ("<Command-C>", "<<Copy>>"),
-                                ("<Command-x>", "<<Cut>>"), ("<Command-X>", "<<Cut>>")):
-            widget.bind(sequence,
-                        lambda e, ev=event: (e.widget.event_generate(ev), "break")[1])
-        widget.bind("<Command-a>", lambda e: (self._select_all(), "break")[1])
-        widget.bind("<Command-A>", lambda e: (self._select_all(), "break")[1])
+        # Only on macOS. Tk maps the Command modifier to Mod1, which is Cmd there and Alt
+        # everywhere else -- binding it on Windows would put paste on Alt+V, next to a
+        # Ctrl+V that Tk already handles, and take Alt+V away from whatever wanted it.
+        if sys.platform == "darwin":
+            for sequence, event in (("<Command-v>", "<<Paste>>"), ("<Command-V>", "<<Paste>>"),
+                                    ("<Command-c>", "<<Copy>>"), ("<Command-C>", "<<Copy>>"),
+                                    ("<Command-x>", "<<Cut>>"), ("<Command-X>", "<<Cut>>")):
+                widget.bind(sequence,
+                            lambda e, ev=event: (e.widget.event_generate(ev), "break")[1])
+            widget.bind("<Command-a>", lambda e: (self._select_all(), "break")[1])
+            widget.bind("<Command-A>", lambda e: (self._select_all(), "break")[1])
 
         menu = tk.Menu(widget, tearoff=0)
         for label, event in (("붙여넣기", "<<Paste>>"), ("복사", "<<Copy>>"),

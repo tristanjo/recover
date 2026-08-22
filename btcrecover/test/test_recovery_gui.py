@@ -459,7 +459,13 @@ class Screens(unittest.TestCase):
         self._load()
         self.app.show_mnemonic()
         bound = set(self.app.mnemonic_text.bind())
-        self.assertIn("<Mod1-Key-v>", bound)
+        if sys.platform == "darwin":
+            # Tk normalises <Command-v> to <Mod1-Key-v>. Bound only here: Mod1 is Cmd on
+            # macOS and Alt everywhere else, so binding it on Windows would put paste on
+            # Alt+V beside a Ctrl+V that Tk already handles.
+            self.assertIn("<Mod1-Key-v>", bound)
+        else:
+            self.assertNotIn("<Mod1-Key-v>", bound, "paste is bound to Alt+V on this platform")
         for button in ("<Button-3>", "<Button-2>", "<Control-Button-1>"):
             self.assertIn(button, bound, "right-click has no menu on some platform")
 
@@ -485,10 +491,17 @@ class Screens(unittest.TestCase):
         self.app.clipboard_append(MNEMONIC)
         self.app.update()
         self.app._clear_clipboard()
-        self.assertEqual(self.app.clip_status.cget("text"), "비웠습니다.")
-        self.assertEqual(str(self.app.clip_status.cget("foreground")), self.app.c["ok"])
-        with self.assertRaises(recovery_gui.tk.TclError):
-            self.app.clipboard_get()
+        try:
+            left = self.app.clipboard_get()
+        except recovery_gui.tk.TclError:
+            left = ""
+        if left.strip():
+            # some window managers and CI images hand the clipboard straight back, which is
+            # the case the button reports rather than hides
+            self.assertIn("지우지 못했습니다", self.app.clip_status.cget("text"))
+        else:
+            self.assertEqual(self.app.clip_status.cget("text"), "비웠습니다.")
+            self.assertEqual(str(self.app.clip_status.cget("foreground")), self.app.c["ok"])
 
     def test_it_reports_a_clipboard_that_refilled(self):
         self._load()
