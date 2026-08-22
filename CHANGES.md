@@ -17,6 +17,67 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
+## 2026-08-22 — Estimate the time on the customer's own machine
+
+**Changed:** `webapp/diagnostic.html`, `btcrecover/test/test_webapp_model.py` (new),
+`.github/workflows/build-windows.yml`
+
+The page told every visitor the same three times, computed from invented parallel
+efficiencies (0.55 / 0.70 / 0.80 for a 4-, 8- and 16-core machine). Since that number is
+what someone decides to pay on, it is now measured instead.
+
+**The visitor's machine is measured, not asked about.** A browser cannot read a CPU model,
+and it should not be able to. It can run the same arithmetic the recovery runs:
+PBKDF2-HMAC-SHA512, 2048 rounds, through WebCrypto. On the reference machine that reads
+2,500/s against Python's 2,414/s — close enough to use almost directly. Core count comes
+from `navigator.hardwareConcurrency`, with a field to override it for someone who will run
+the recovery on a different computer. No network request is involved; the measurement never
+leaves the page.
+
+**Two things had to be right or the measurement is worse than none.**
+
+* Run at page load, the identical code returned **0.86/s** where it returns 2,414/s once the
+  page is idle — the main thread was busy with the page's own startup and every call
+  waited. An average carries that straight through, and a customer whose browser hiccuped
+  would be quoted centuries. The rate now comes from the 20th percentile of individual call
+  times: interference can only make a call slower, never faster than the hardware allows.
+  The benchmark is also deferred to `requestIdleCallback`, and a result outside 20–200,000/s
+  is refused rather than shown.
+* The calibration constant has to be taken with the same statistic it corrects. By average
+  the browser reads 2,193/s; by the quantile, 2,500/s. Using the first to calibrate the
+  second inflated every estimate by 14%.
+
+**The cost model itself was 37% optimistic.** Re-measured at one thread, 20,000 candidates
+per point: 1 address 645.0µs, 5 addresses 817.7µs, 10 addresses 1038.1µs, 20 addresses
+1432.9µs. That is a straight line — 603.5µs fixed plus 41.5µs per address, within 2%. The
+old model used 1/2400 + 32µs per address and forgot the ~190µs of Python that handling one
+candidate costs on top of PBKDF2.
+
+**Derivation paths are not a multiplier.** Ten addresses over one path measured 1038.1µs and
+over three paths 1045.1µs. btcrecover skips paths that do not match the supplied address
+type and says so in its own log. The page was multiplying by the number of paths chosen, so
+anyone who picked "자동 (BIP44 + BIP49 + BIP84)" was quoted three times the real search.
+It now counts matching paths the same way the program does, and says on screen when paths
+are being skipped.
+
+**Parallel scaling is measured too**, at 150,000 candidates per point so pool startup is not
+mistaken for poor scaling: 1 thread 995/s, 2 → 1,962, 4 → 3,528, 8 → 6,367, 10 → 7,433,
+12 → 8,654, 14 → 9,771. Fourteen cores give 9.8x, not 14x. This is one machine's curve and
+is labelled as such.
+
+End to end on the reference machine the page now predicts 982/s against 995/s measured at one
+thread, and 9,632/s against 9,771/s at fourteen — 1.3% and 1.4%. That is a fit, not a
+prediction on an unseen machine; the honest claim is that the single-core speed is measured
+on the visitor's machine and the rest is measured on one machine and stated as such. The
+program itself needs none of this: it shows remaining time from the rate it is actually
+achieving.
+
+`test_webapp_model.py` reads the constants back out of the page and checks they still
+reproduce the runs they came from. The old constants were wrong by 37% and nothing could
+have noticed — the numbers lived in JavaScript where no test could reach them.
+
+---
+
 ## 2026-08-22 — Stop starving the worker processes (4x)
 
 **Changed:** `btcrecover/btcrpass.py`, `btcrecover/embed.py`, `btcrecover/test/test_embed.py`
