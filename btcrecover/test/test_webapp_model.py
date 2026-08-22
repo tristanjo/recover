@@ -186,6 +186,24 @@ class Consent(unittest.TestCase):
         # before measuring, the estimate comes from the reference machine and must say so
         self.assertIn("기준 컴퓨터", self.source)
 
+    def test_nothing_claims_the_measurement_already_happened(self):
+        # the footer used to open "computed from the speed measured on this computer",
+        # which was true when the benchmark ran on load and became a lie the moment it
+        # was put behind a button. Anything stated unconditionally has to hold before
+        # anyone presses anything.
+        foot = self.source.split('<p class="foot">')[1].split("</p>")[0]
+        self.assertNotIn("이 컴퓨터에서 직접 잰", foot)
+        self.assertIn("버튼을 눌러", foot)
+
+    def test_measuring_is_offered_as_narrowing_not_as_exactness(self):
+        # measuring replaces one machine's speed with another's. The parallel-scaling and
+        # address-derivation figures stay borrowed either way, so the estimate gets better
+        # rather than becoming correct, and the button should not promise otherwise.
+        button = self.source.split('class="measure-btn" onclick="runBenchmark()"')[1] \
+                            .split("</button>")[0]
+        self.assertNotIn("정확하게", button)
+        self.assertNotIn("정확히", button)
+
     def test_there_is_a_way_to_read_how_it_works(self):
         self.assertIn('id="howmodal"', self.source)
         self.assertIn("openModal", self.source)
