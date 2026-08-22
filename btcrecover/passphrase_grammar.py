@@ -355,6 +355,12 @@ def _build_slot(spec):
                        .format(kind))
 
 
+# A field shows dots, so a space at either end is invisible -- and it is easy to acquire:
+# typed by accident, or picked up by a copy-paste that took one character too many. Tried
+# outermost, so a passphrase with no stray space is reached exactly as soon as it was before.
+WHITESPACE_FORMS = ("{}", "{} ", " {}", " {} ")
+
+
 class PassphraseGrammar:
     """Expands a passphrase grammar into candidates, lazily and in a fixed order.
 
@@ -380,6 +386,8 @@ class PassphraseGrammar:
         # Order by likelihood rather than by odometer. Off gives the raw product order,
         # which is what a test wants when it needs to compare the two.
         self.priority = bool(pp.get("priority", True))
+        # Also try the candidate with a space at either end, or both.
+        self.whitespace = bool(pp.get("whitespace"))
         self.normalizations = pp.get("normalizations") or ["NFKD"]
 
     @classmethod
@@ -401,7 +409,14 @@ class PassphraseGrammar:
         return arrangements * separators
 
     def count(self):
-        """Exact number of candidates `generate()` will yield.
+        """Exact number of candidates `generate()` will yield."""
+        return self._core_count() * len(self._whitespace_forms())
+
+    def _whitespace_forms(self):
+        return WHITESPACE_FORMS if self.whitespace else ("{}",)
+
+    def _core_count(self):
+        """The count before stray whitespace is considered.
 
         Every block has a fixed number of parts, so each contributes a product rather than
         an enumeration. Assumes no two slots can produce the same string; where they can,
@@ -521,6 +536,34 @@ class PassphraseGrammar:
                 yield order[0]
 
     def generate(self, skip=0, limit=None):
+        """Yields candidates in a fixed order, resumable via `skip`.
+
+        Stray whitespace is the outermost loop: every candidate is tried untouched before
+        any is tried with a space attached, so asking for it never delays the case where
+        there was none.
+        """
+        if skip < 0:
+            raise ValueError("skip must be >= 0")
+        forms = self._whitespace_forms()
+        if len(forms) == 1:
+            yield from self._generate_core(skip, limit)
+            return
+
+        base = self._core_count()
+        produced = 0
+        for form in forms:
+            if skip >= base:
+                skip -= base
+                continue
+            remaining = None if limit is None else limit - produced
+            for candidate in self._generate_core(skip, remaining):
+                yield form.format(candidate)
+                produced += 1
+                if limit is not None and produced >= limit:
+                    return
+            skip = 0
+
+    def _generate_core(self, skip=0, limit=None):
         """Yields candidates in a fixed order, resumable via `skip`.
 
         Order is by priority when the grammar asks for it: the values a slot considers

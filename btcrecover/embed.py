@@ -38,7 +38,7 @@ The mnemonic is a parameter and never comes from the config: the config is writt
 website, and a seed phrase must not be.
 """
 
-import contextlib, io, json, multiprocessing, os, sys, threading, time
+import contextlib, hashlib, io, json, multiprocessing, os, sys, tempfile, threading, time
 
 from btcrecover.passphrase_grammar import PassphraseGrammar, GrammarError
 
@@ -101,16 +101,58 @@ TYPO_FLAGS = {
     "repeat":   ["--typos-repeat"],     # a character typed twice
     "delete":   ["--typos-delete"],     # a character missed
     "keyboard": None,   # a neighbouring key; the map file is located at call time
+    "leet":     None,   # a -> @, e -> 3, o -> 0; likewise a map
+    # A wrong character, or one character too many. Tried as a lowercase letter or a digit:
+    # the printable set is nearly three times the work (838 variants of a nine-character
+    # passphrase against 316) for characters a slip of the finger rarely produces.
+    "replace":  ["--typos-replace", "%n"],
+    "insert":   ["--typos-insert", "%n"],
 }
+
+TYPO_MAPS = {"keyboard": "us-with-shifts-map.txt", "leet": "leet-map.txt"}
 
 # Resolved against this package rather than the working directory: a frozen build is
 # started from wherever the user happens to be, and PyInstaller unpacks the tree next to
 # the modules, not next to the shortcut that launched it.
+# Resolved against this package rather than the working directory: a frozen build is started
+# from wherever the user happens to be, and PyInstaller unpacks the tree next to the modules.
+#
 # us-map.txt covers unshifted keys only, so it does nothing at all to a passphrase with a
 # capital in it -- measured: seven variants of "TREZOr" against thirty-four. The shifted map
 # is the one to use for a passphrase, which is rarely all lower case.
-KEYBOARD_MAP = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                            "typos", "us-with-shifts-map.txt")
+TYPO_MAP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "typos")
+
+
+def typo_map_path(name):
+    return os.path.join(TYPO_MAP_DIR, TYPO_MAPS[name])
+
+
+def merged_typo_map(names):
+    """One map file covering all of `names`.
+
+    --typos-map takes a single file, and passing it twice keeps only the last -- so asking
+    for both a neighbouring key and leetspeak would silently drop one of them. btcrecover's
+    own parser accumulates replacements per character, so concatenating the files merges
+    them correctly; a character listed in both ends up with the union.
+
+    The merged file is written once per combination and reused. It holds nothing but the
+    public map files it was built from.
+    """
+    paths = [typo_map_path(n) for n in names]
+    if len(paths) == 1:
+        return paths[0]
+
+    digest = hashlib.sha256("|".join(sorted(names)).encode()).hexdigest()[:12]
+    merged = os.path.join(tempfile.gettempdir(), "btcr-typo-map-" + digest + ".txt")
+    if not os.path.exists(merged):
+        body = []
+        for name, path in zip(names, paths):
+            body.append("# from " + TYPO_MAPS[name])
+            with open(path, "r", encoding="utf-8") as f:
+                body.append(f.read().rstrip("\n"))
+        with open(merged, "w", encoding="utf-8") as f:
+            f.write("\n".join(body) + "\n")
+    return merged
 
 
 def _typo_flags(spec):
@@ -119,11 +161,16 @@ def _typo_flags(spec):
     Nothing is passed unless at least one kind is asked for: --typos on its own is an
     error, and asking for none should mean none rather than an argument list that fails.
     """
-    chosen = []
+    chosen, maps = [], []
     for name, flags in TYPO_FLAGS.items():
         if not spec.get(name):
             continue
-        chosen += flags if flags else ["--typos-map", KEYBOARD_MAP]
+        if flags:
+            chosen += flags
+        else:
+            maps.append(name)
+    if maps:
+        chosen += ["--typos-map", merged_typo_map(maps)]
     limit = spec.get("max", 1)
     limit = 1 if limit is None else int(limit)
     if not chosen or limit < 1:

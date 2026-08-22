@@ -171,6 +171,38 @@ class Pools(unittest.TestCase):
         self.assertEqual(list(g.generate()), ["ab"])
 
 
+class StrayWhitespace(unittest.TestCase):
+    """A space at either end is invisible in a password field and easy to acquire."""
+
+    @staticmethod
+    def _grammar(whitespace):
+        return PassphraseGrammar({"passphrase": {
+            "slots": [words(["a", "b"])], "separators": [""], "whitespace": whitespace}})
+
+    def test_off_by_default(self):
+        self.assertEqual(list(self._grammar(False).generate()), ["a", "b"])
+
+    def test_tried_outermost(self):
+        # every candidate untouched before any is tried with a space, so asking for this
+        # never delays a passphrase that had none
+        self.assertEqual(list(self._grammar(True).generate()),
+                         ["a", "b", "a ", "b ", " a", " b", " a ", " b "])
+
+    def test_count_matches_generation(self):
+        g = self._grammar(True)
+        self.assertEqual(g.count(), len(list(g.generate())))
+        self.assertEqual(g.count(), 4 * self._grammar(False).count())
+
+    def test_skip_and_limit(self):
+        g = self._grammar(True)
+        full = list(g.generate())
+        for k in range(len(full) + 1):
+            with self.subTest(skip=k):
+                self.assertEqual(list(g.generate(skip=k)), full[k:])
+        self.assertEqual(list(g.generate(limit=3)), full[:3])
+        self.assertEqual(list(g.generate(skip=3, limit=2)), full[3:5])
+
+
 class WebToolAgreement(unittest.TestCase):
     """The same grammars, counted independently by webapp/diagnostic.html.
 

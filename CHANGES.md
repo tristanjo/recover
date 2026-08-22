@@ -17,6 +17,35 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
+## 2026-08-22 — Three more ways an ordinary person's memory differs from the wallet
+
+**Changed:** `btcrecover/passphrase_grammar.py`, `btcrecover/embed.py`, `webapp/diagnostic.html`
+
+**Stray whitespace.** A space at either end of a passphrase is invisible in a field that
+shows dots, and easy to acquire — typed by accident, or taken along by a copy-paste. Tried
+outermost, so every candidate is attempted untouched before any is attempted with a space
+attached: four times the work at worst, and no delay to a passphrase that had none.
+
+**Leetspeak** (`a` → `@`, `o` → `0`). btcrecover ships the map and this fork already bundled
+it; it simply was not offered. Five variants of a nine-character passphrase, and — like case
+and capslock — none at all for Hangul, so the page disables it there.
+
+**A wrong character, or one too many** (`--typos-replace`, `--typos-insert`). Tried as
+lowercase letters and digits: the full printable set is nearly three times the work, 838
+variants against 316, for characters a slip of the finger rarely produces.
+
+Two things worth recording. `--typos-map` takes a single file and keeps only the last given,
+so asking for both a neighbouring key and leetspeak silently dropped one — they are merged
+into one map now, which btcrecover's own parser handles correctly since it accumulates
+replacements per character. And the page's cost model returned early when no mistyping was
+selected, skipping the whitespace multiplier, so whitespace alone appeared free.
+
+Not added, deliberately. An empty passphrase: if it were empty the mnemonic alone would have
+opened the wallet and nobody would be looking. Full-width characters and Korean spacing: real
+but rarer, and each would widen every search.
+
+---
+
 ## 2026-08-22 — Measure the ordering before changing it
 
 **Added:** `utilities/passphrase_rank_benchmark.py`

@@ -205,6 +205,17 @@ class Typos(unittest.TestCase):
                 self.assertTrue(result.found, result.error or result.log[-400:])
                 self.assertEqual(result.passphrase, PASSPHRASE)
 
+    def test_two_maps_are_merged_rather_than_one_overwriting_the_other(self):
+        """--typos-map takes a single file and the last one wins, so asking for both a
+        neighbouring key and leetspeak would silently drop one."""
+        flags = embed._typo_flags({"keyboard": True, "leet": True})
+        self.assertEqual(flags.count("--typos-map"), 1)
+        merged = flags[flags.index("--typos-map") + 1]
+        with open(merged, "r", encoding="utf-8") as f:
+            body = f.read()
+        for name in ("us-with-shifts-map.txt", "leet-map.txt"):
+            self.assertIn(name, body)
+
     def test_typo_flags_reach_the_command_line(self):
         cfg = config()
         cfg["typos"] = {"max": 2, "case": True}

@@ -176,6 +176,18 @@ working directory so a frozen build finds it. The unshifted `us-map.txt` is deli
 used: it does nothing at all to a passphrase containing a capital — seven variants of
 `TREZOr` against thirty-four.
 
+### Stray whitespace
+
+`"whitespace": true` on the passphrase section also tries each candidate with a space at
+the front, at the end, and at both. A field shows dots, so a space there is invisible, and
+it is easy to acquire: typed by accident, or picked up by a copy-paste that took one
+character too many.
+
+It lives with the grammar rather than with the typos, because it is not a mistyping, and it
+is applied **outermost** — every candidate is tried untouched before any is tried with a
+space attached. Four times the work in the worst case, and no delay at all to a passphrase
+that had none.
+
 ### What each one costs
 
 Measured with `btcrecover --listpass`, not derived:
@@ -189,13 +201,25 @@ Measured with `btcrecover --listpass`, not derived:
 | `delete` | 10 | 9 |
 | `repeat` | 10 | 9 |
 | `keyboard` | 34 | 21 |
+| `leet` | 5 | **1** |
+| `replace` | 316 | 285 |
+| `insert` | 352 | 321 |
 | all five, `max: 1` | 33 | 24 |
 | all five, `max: 2` | 486 | 241 |
 | all five, `max: 3` | 4,222 | 1,360 |
 
-**`case` and `capslock` do nothing to Hangul**, which has no letter case. Offering them to a
-Korean passphrase costs nothing and gains nothing, so the diagnostic page disables them when
-the sample contains no Latin letters.
+**`case`, `capslock` and `leet` do nothing to Hangul** — there is no letter case, and the leet
+map replaces Latin letters. Offering them for a Korean passphrase costs nothing and gains
+nothing, so the diagnostic page disables them when the sample contains no Latin letters.
+
+`replace` and `insert` try lowercase letters and digits (`%n`). The full printable set is
+nearly three times the work — 838 variants of a nine-character passphrase against 316 — for
+characters a slip of the finger rarely produces.
+
+`keyboard` and `leet` are both `--typos-map`, which takes **one** file and keeps only the
+last given. Asking for both would silently drop one, so they are merged into a single map
+first; btcrecover's parser accumulates replacements per character, so a character listed in
+both ends up with the union of them.
 
 The page's estimate is an upper bound: it counts every combination of up to `max` changes,
 while btcrecover discards variants that collide. On the nine-character sample that is 529
