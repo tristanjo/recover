@@ -188,15 +188,16 @@ class Consent(unittest.TestCase):
 
     def test_there_is_a_way_to_read_how_it_works(self):
         self.assertIn('id="howmodal"', self.source)
-        self.assertIn("showHowModal", self.source)
+        self.assertIn("openModal", self.source)
         for promised in ("PBKDF2-HMAC-SHA512", "hardwareConcurrency",
                          "connect-src", "crypto.subtle"):
             self.assertIn(promised, self.source.split('id="howmodal"')[1])
 
     def test_the_modal_can_be_dismissed(self):
         modal = self.source.split('id="howmodal"')[1].split("<script>")[0]
-        self.assertIn("hideHowModal", modal)
+        self.assertIn("modal-close", modal)
         self.assertIn("Escape", self.source)
+        self.assertIn("closeAllModals", self.source)
 
     def test_nothing_about_the_visitor_is_kept(self):
         # a measurement that survives a reload is a stored fact about someone's machine
@@ -324,6 +325,72 @@ class PathDerivation(unittest.TestCase):
         self.assertNotIn('<select id="paths">', self.source)
         self.assertIn('id="accounts"', self.source)      # what the address cannot say
         self.assertIn('id="changechain"', self.source)
+
+
+class AfterRecovery(unittest.TestCase):
+    """What to do once the passphrase is found, said in both places that say it.
+
+    The program says this on its success screen, which is too late to order a hardware
+    wallet. The page has to say it too, before anyone starts. And the two must not drift
+    apart: a customer who reads one and follows the other should not end up somewhere
+    different.
+    """
+
+    # The claims that carry the security, in whatever wording each surface uses.
+    CLAIMS = [
+        ("계속 오프라인", "the recovery machine is not reconnected to move the funds"),
+        ("하드웨어 지갑", "the seed is restored onto a device, not a networked wallet"),
+        ("서명은 하드웨어 지갑 안에서", "the key never reaches the broadcasting device"),
+        ("한 번에", "one hop, no stop at a hot wallet on the way"),
+        ("하드웨어 지갑 화면에서 직접 확인", "the receiving address is checked on the device"),
+        ("하드웨어 지갑이 없다면", "someone without one still has something to do today"),
+    ]
+
+    @staticmethod
+    def flat(text):
+        """Both surfaces wrap their sentences across source lines wherever they like."""
+        return re.sub(r"\s+", " ", text.replace("\\n", " "))
+
+    def setUp(self):
+        self.page = page_source()
+        gui = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "..", "..", "recovery_gui.py")
+        with open(gui, "r", encoding="utf-8") as f:
+            self.gui = f.read()
+
+    def modal(self):
+        return self.flat(self.page.split('id="aftermodal"')[1].split('id="howmodal"')[0])
+
+    def test_the_page_says_it_before_anyone_starts(self):
+        self.assertIn('id="aftermodal"', self.page)
+        modal = self.modal()
+        for claim, why in self.CLAIMS:
+            with self.subTest(why):
+                self.assertIn(claim, modal)
+
+    def test_the_program_says_the_same_thing(self):
+        gui = self.flat(self.gui)
+        for claim, why in self.CLAIMS:
+            with self.subTest(why):
+                self.assertIn(claim, gui)
+
+    def test_the_page_tells_them_in_time_to_buy_one(self):
+        # a hardware wallet ordered after the passphrase is found arrives days late, and
+        # the risk runs the whole time
+        self.assertIn("지금 주문", self.modal())
+
+    def test_neither_surface_calls_offline_a_proof(self):
+        # offline running is prevention, not evidence -- claiming otherwise costs the
+        # credibility of the parts that can actually be checked
+        modal = self.modal()
+        self.assertIn("증명은 아닙니다", modal)
+        for surface in (modal, self.flat(self.gui)):
+            self.assertNotIn("완전히 안전합니다", surface)
+
+    def test_the_link_is_where_they_commit(self):
+        # next to the download, which is the moment they decide to go ahead
+        export = self.page.split("<h2>내보내기</h2>")[1].split("</div>\n  </div>")[0]
+        self.assertIn("openModal('aftermodal')", export)
 
 
 if __name__ == '__main__':

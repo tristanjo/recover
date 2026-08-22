@@ -17,6 +17,36 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
+## 2026-08-22 — Say what happens after recovery before anyone starts
+
+**Changed:** `webapp/diagnostic.html`, `btcrecover/test/test_webapp_model.py`
+
+The program explains how to move the funds on its success screen, which is the wrong time
+to learn that a hardware wallet is needed — one ordered at that point arrives days later,
+and if the seed did leak the risk runs for every one of them. The diagnostic page is read
+before anyone buys anything, so it says it there too, in a modal beside the config
+download: the moment someone decides to go ahead.
+
+The steps are the ones the program gives — keep the recovery machine offline for good,
+restore onto a hardware wallet, build the transaction in the phone app paired to it so the
+signing happens on the device and the private key never reaches anything networked, one hop
+straight to the final address, and check the receiving address on the device's own screen.
+It adds the step the program cannot: order the hardware wallet now. And it ends where the
+program's screen does not need to — reconnect the recovery computer only after the coins
+have moved.
+
+It also says plainly that running offline is prevention and not proof. Malware need not
+send what it sees at the moment it sees it, and deleting the program does not delete what
+the program wrote. Offline is worth doing; it is not evidence, and treating it as evidence
+spends credibility that the published source and hash then have to earn back.
+
+`AfterRecovery` in `test_webapp_model.py` checks the six load-bearing claims appear on both
+surfaces, so the page and the program cannot drift into telling a customer different things.
+Verified by deleting the address-check line from the page and the one-hop rule from the
+program, and watching each fail on its own.
+
+---
+
 ## 2026-08-22 — Shut the seed screen while the network is up, and say what to do after
 
 **Changed:** `recovery_gui.py`, `btcrecover/test/test_recovery_gui.py`,
