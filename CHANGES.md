@@ -63,6 +63,50 @@ win rather than the second one failing.
 
 ---
 
+## 2026-08-22 — Check the seed phrase before spending days on it, and paste it in the first place
+
+**Changed:** `recovery_gui.py`, `btcrecover/test/test_recovery_gui.py`
+
+Found by reading a real run's log, in a screenshot, where this line was sitting quietly
+between two pieces of command-line advice:
+
+    'reble' was in your guess, but it's not a valid seed word;
+        trying 'rebel' instead.
+
+btcrecover does not stop for a word it does not recognise. It substitutes the closest one
+and says so — in a log box nobody opens. So a search can run for days against a seed phrase
+its owner never typed, fail, and report nothing more useful than that the passphrase was not
+found. 'reble' is one edit from 'rebel', and also from 'resemble' and 'relief'.
+
+The phrase is now checked while it is being typed: every word against the BIP39 list, the
+word count against the five lengths that exist, and then the **checksum**, which is the part
+worth having — a valid phrase carries a few bits derived from the rest of it, so one wrong or
+swapped word almost always fails it. A phrase that fails is refused rather than asked about;
+it cannot be the phrase that made this wallet, so searching it burns days to reach the one
+answer known in advance.
+
+And when it is right the screen says so — `12단어 · 모두 BIP39 단어 · 체크섬 정상`. Someone
+typing twenty-four words they wrote down years ago has no way to know they got them in, and
+that line costs nothing to show.
+
+**Pasting did not work at all.** Tk on macOS delivers Command-key shortcuts through the menu
+bar, and this program had no menu, so Cmd+V did nothing in every field — including the one
+where a seed phrase goes. Twenty-four words typed by hand is twenty-four chances to get one
+wrong. There is an Edit menu now, and the word count follows a paste, which it did not: the
+counter hung off KeyRelease and a paste produces no key event, so twelve words would sit in
+the field under a label reading "0 단어".
+
+**Also:** the log drops advice nobody in a window can take (`--skip-pre-start`,
+`--mnemonic-length`, `--no-dupchecks`, the internal wallet class name) and keeps the two
+lines that matter — which crypto backend was chosen, and whether a word was substituted.
+`방송` became `거래를 네트워크에 올리는` throughout: it is the right term and the wrong word,
+since in Korean it means television first. Screens are repainted after being rebuilt, because
+Tk 9 on macOS could leave the window showing nothing until a click. And the progress screen
+leads with the percentage at 34pt with elapsed, remaining and rate beside it, while the
+success screen opens with a green tick, "찾았습니다", and how long it took.
+
+---
+
 ## 2026-08-22 — Ask about the network instead of locking the button, and make the window readable
 
 **Changed:** `recovery_gui.py`, `btcrecover/test/test_recovery_gui.py`

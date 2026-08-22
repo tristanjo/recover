@@ -103,9 +103,56 @@ def texts(widget):
 class Helpers(unittest.TestCase):
     """These run without a display."""
 
+    def test_a_seed_word_that_is_not_a_seed_word_is_caught(self):
+        """btcrecover substitutes the closest word and says so only in the log.
+
+        A search then runs -- possibly for days -- against a phrase its owner never typed,
+        and reports nothing more useful than "not found". The owner can fix their own typo;
+        a guess between 'rebel', 'resemble' and 'relief' cannot.
+        """
+        good = MNEMONIC
+        self.assertEqual(recovery_gui.unknown_seed_words(good), [])
+        bad = good.replace("about", "reble")
+        found = recovery_gui.unknown_seed_words(bad)
+        self.assertEqual([w for w, _ in found], ["reble"])
+        self.assertIn("rebel", found[0][1])
+
+    def test_case_does_not_make_a_word_unknown(self):
+        self.assertEqual(recovery_gui.unknown_seed_words("ABANDON about"), [])
+
+    def test_a_missing_wordlist_does_not_block_the_search(self):
+        # if the list cannot be read there is nothing to check against, and refusing to
+        # search would be worse than letting btcrecover decide
+        original = recovery_gui.seed_wordlist
+        recovery_gui.seed_wordlist = lambda *a, **k: None
+        try:
+            self.assertEqual(recovery_gui.unknown_seed_words("nonsense words here"), [])
+        finally:
+            recovery_gui.seed_wordlist = original
+
+    def test_the_log_drops_advice_nobody_can_take(self):
+        # command-line flags, in a window with no command line, sitting between the lines
+        # that do matter
+        noisy = ("Detected supplied address types: BIP84 (P2WPKH)\n"
+                 "Assuming a 24 word mnemonic. (This can be overridden with --mnemonic-length)\n"
+                 "Wallet Type: btcrpass.WalletBIP39\n"
+                 "'reble' was in your guess, but it's not a valid seed word;\n"
+                 "Pre-start benchmark: measuring. Use --skip-pre-start to skip or ...\n"
+                 "Duplicate Check Level: 1 , Add --no-dupchecks up to 4 times fully disable\n"
+                 "secp256k1 backend: wallycore")
+        tidy = recovery_gui.RecoveryApp._tidy_log(noisy)
+        for gone in ("--mnemonic-length", "--skip-pre-start", "--no-dupchecks",
+                     "btcrpass.WalletBIP39"):
+            self.assertNotIn(gone, tidy)
+        # and the two that matter survive
+        self.assertIn("not a valid seed word", tidy)
+        self.assertIn("secp256k1 backend", tidy)
+
     def test_humanize(self):
         self.assertEqual(recovery_gui.humanize(45), "45초")
-        self.assertEqual(recovery_gui.humanize(300), "5분")
+        self.assertEqual(recovery_gui.humanize(300), "5분 0초")
+        self.assertEqual(recovery_gui.humanize(0.4), "1초 미만")   # not "0초"
+        self.assertEqual(recovery_gui.humanize(90), "1분 30초")
         self.assertEqual(recovery_gui.humanize(7200), "2.0시간")
         self.assertEqual(recovery_gui.humanize(None), "계산 중")
         self.assertEqual(recovery_gui.humanize(float("inf")), "계산 중")
@@ -251,6 +298,115 @@ class Screens(unittest.TestCase):
         self.assertIn("{:,}개".format(self.app.plan.candidate_count()), screen)
         self.assertIn("정규화 형태별로 최대 {}번씩".format(len(self.app.plan.normalizations)),
                       screen)
+
+    def test_the_screen_says_the_phrase_is_good(self):
+        """Say so when it is right, not only when it is wrong.
+
+        Someone typing twenty-four words they wrote down years ago has no way to know they
+        got them in. "체크섬 정상" costs nothing to show and answers the question they are
+        actually asking before they commit to a search that runs for days.
+        """
+        self._load()
+        self.app.show_mnemonic()
+        self.app.mnemonic_text.insert("1.0", MNEMONIC)
+        self.app._count_words()
+        self.assertEqual(self.app.seed_state, "ok")
+        self.assertIn("체크섬 정상", self.app.seed_status.cget("text"))
+        self.assertEqual(str(self.app.seed_status.cget("foreground")), self.app.c["ok"])
+
+    def test_the_screen_names_the_wrong_word(self):
+        self._load()
+        self.app.show_mnemonic()
+        self.app.mnemonic_text.insert("1.0", MNEMONIC.replace("about", "reble"))
+        self.app._count_words()
+        self.assertEqual(self.app.seed_state, "bad")
+        self.assertIn("reble", self.app.seed_status.cget("text"))
+        self.assertIn("rebel", self.app.seed_status.cget("text"))
+        self.assertEqual(str(self.app.seed_status.cget("foreground")), self.app.c["bad"])
+
+    def test_a_phrase_that_fails_its_checksum_is_refused(self):
+        # not a judgement call: it cannot be the phrase that made this wallet, so searching
+        # it burns days to reach the one answer known in advance
+        self._load()
+        self.app.show_mnemonic()
+        self.app.mnemonic_text.insert("1.0", MNEMONIC.replace("about", "abandon"))
+        shown = []
+        original = recovery_gui.messagebox.showerror
+        recovery_gui.messagebox.showerror = lambda *a, **k: shown.append(a)
+        try:
+            self.app.start_search()
+        finally:
+            recovery_gui.messagebox.showerror = original
+        self.assertEqual(len(shown), 1)
+        self.assertIn("체크섬", shown[0][1])
+        self.assertIsNone(self.app.result)
+
+    def test_checksum_arithmetic(self):
+        good = recovery_gui.check_mnemonic(MNEMONIC)
+        self.assertEqual(good[0], "ok")
+        for bad in (MNEMONIC.replace("about", "abandon"),       # checksum
+                    " ".join(MNEMONIC.split()[:11]),            # length
+                    MNEMONIC.replace("about", "reble")):        # not a word
+            with self.subTest(bad[-20:]):
+                self.assertEqual(recovery_gui.check_mnemonic(bad)[0], "bad")
+        self.assertEqual(recovery_gui.check_mnemonic("")[0], "empty")
+        self.assertEqual(recovery_gui.check_mnemonic(MNEMONIC.upper())[0], "ok")
+
+    def test_the_word_count_follows_a_paste(self):
+        """A pasted phrase must not leave the counter reading "0 단어".
+
+        The counter hangs off KeyRelease, and a paste produces no key event, so twelve
+        words would sit in the field under a label saying none. That reads as "it did not
+        go in", and the next thing someone does is retype it by hand.
+
+        The clipboard round-trip itself is not exercised here: Tk needs a mapped, focused
+        window for it, which a test window is not. It was checked by hand against a real
+        window -- twelve words in, "12 단어" out.
+        """
+        self._load()
+        self.app.show_mnemonic()
+        self.app.mnemonic_text.insert("1.0", MNEMONIC)
+        self.assertEqual(self.app.word_count.cget("text"), "0 단어")
+        # the handler the <<Paste>> binding schedules. Generating the virtual event needs a
+        # mapped, focused window, which a test window is not -- so call what it calls, and
+        # check separately that the binding is there to call it.
+        self.assertTrue(self.app.mnemonic_text.bind("<<Paste>>"),
+                        "nothing listens for a paste, so the counter would not follow one")
+        self.app._count_words_if_open()
+        self.assertEqual(self.app.word_count.cget("text"), "12 단어")
+
+    def test_the_menu_sends_the_event_to_whatever_has_focus(self):
+        # the menu item has no widget of its own to act on
+        sent = []
+        self.app.show_mnemonic()
+        self.app.mnemonic_text.focus_set()
+        self.app.update()
+        original = self.app.focus_get
+        self.app.focus_get = lambda: self.app.mnemonic_text
+        try:
+            self.app.mnemonic_text.event_generate = lambda e, **k: sent.append(e)
+            self.app._to_focused("<<Copy>>")
+        finally:
+            self.app.focus_get = original
+            del self.app.mnemonic_text.event_generate
+        self.assertEqual(sent, ["<<Copy>>"])
+
+    def test_the_edit_menu_exists_at_all(self):
+        name = self.app.cget("menu")
+        self.assertTrue(name, "no menu bar, so Cmd+V reaches nothing on macOS")
+        submenu = self.app.nametowidget(
+            self.app.nametowidget(name).entrycget("편집", "menu"))
+        labels = [submenu.entrycget(i, "label") for i in range(submenu.index("end") + 1)
+                  if submenu.type(i) == "command"]
+        self.assertEqual(labels, ["잘라내기", "복사", "붙여넣기", "전체 선택"])
+
+    def test_a_new_screen_is_repainted(self):
+        # Tk 9 on macOS can leave the window showing the previous screen, or nothing, until
+        # an event forces a redraw -- and an apparently empty window is a bad thing to hand
+        # someone who was told to be careful
+        source = read_source()
+        self.assertIn("self.after_idle(self._repaint)", source)
+        self.assertIn("def _repaint", source)
 
     def test_mnemonic_screen_counts_words(self):
         self._load()

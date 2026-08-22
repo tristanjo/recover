@@ -29,7 +29,7 @@ This program makes no network request of any kind. The connectivity check reads 
 local routing table without sending a packet; see `has_default_route`.
 """
 
-import hashlib, json, os, queue, socket, sys, threading, time, tkinter as tk
+import difflib, hashlib, json, os, queue, socket, sys, threading, time, tkinter as tk
 from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 from btcrecover import embed
@@ -71,6 +71,91 @@ def has_default_route():
         probe.close()
 
 
+WORDLISTS = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "btcrecover", "wordlists")
+
+
+def seed_wordlist(language="en"):
+    """The BIP39 words for a language, or None if the list is not there."""
+    path = os.path.join(getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__))),
+                        "btcrecover", "wordlists", "bip39-{}.txt".format(language or "en"))
+    if not os.path.isfile(path):
+        path = os.path.join(WORDLISTS, "bip39-{}.txt".format(language or "en"))
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return [w.strip() for w in f if w.strip() and not w.startswith("#")]
+    except OSError:
+        return None
+
+
+def unknown_seed_words(mnemonic, language="en"):
+    """Words that are not in the BIP39 list, each with the closest ones that are.
+
+    btcrecover does not stop for these -- it substitutes whatever is closest and prints a
+    line saying so, which in this window lands in a log box nobody opens. So a search can
+    run for days against a seed phrase the owner never typed, fail, and report only that
+    the passphrase was not found.
+
+    Catching it here lets the owner fix their own typo, which they can do and a guess
+    cannot: 'reble' is one edit from 'rebel', and also from 'resemble' and 'relief'.
+    """
+    words = seed_wordlist(language)
+    if not words:
+        return []                      # no list to check against; let btcrecover decide
+    known = set(words)
+    out = []
+    for word in mnemonic.split():
+        if word.lower() not in known:
+            out.append((word, difflib.get_close_matches(word.lower(), words, 3, 0.6)))
+    return out
+
+
+SEED_LENGTHS = (12, 15, 18, 21, 24)
+
+
+def check_mnemonic(mnemonic, language="en"):
+    """Is this a well-formed BIP39 seed phrase? Returns (state, message).
+
+    `state` is "empty", "bad" or "ok". Checked here, while it is being typed, rather than
+    after the search: btcrecover substitutes the closest word for anything it does not
+    recognise and says so only in its log, so a phrase with one wrong word runs to the end
+    against a seed its owner never had and reports only that nothing was found.
+
+    The checksum is the part worth having. Every valid phrase carries a few bits derived
+    from the rest of it, so a single wrong or swapped word almost always fails it. Being
+    told that now costs a second; being told nothing costs the whole search.
+    """
+    words = mnemonic.split()
+    if not words:
+        return "empty", ""
+
+    wordlist = seed_wordlist(language)
+    if not wordlist:
+        return "unknown", "단어 목록을 읽지 못해 확인을 건너뜁니다."
+
+    index = {w: i for i, w in enumerate(wordlist)}
+    missing = [w for w in words if w.lower() not in index]
+    if missing:
+        near = difflib.get_close_matches(missing[0].lower(), wordlist, 1, 0.6)
+        return "bad", "'{}' 은(는) BIP39 단어가 아닙니다{}".format(
+            missing[0], " — 혹시 '{}'인가요?".format(near[0]) if near else ".")
+
+    if len(words) not in SEED_LENGTHS:
+        return "bad", "{}단어입니다. 시드 문구는 {} 단어여야 합니다.".format(
+            len(words), " / ".join(str(n) for n in SEED_LENGTHS))
+
+    # every word is 11 bits; the last few of them are a hash of the rest
+    bits = "".join(bin(index[w.lower()])[2:].zfill(11) for w in words)
+    check_len = len(words) // 3
+    entropy, checksum = bits[:-check_len], bits[-check_len:]
+    digest = hashlib.sha256(int(entropy, 2).to_bytes(len(entropy) // 8, "big")).digest()
+    expected = bin(digest[0])[2:].zfill(8)[:check_len]
+    if checksum != expected:
+        return "bad", ("체크섬이 맞지 않습니다. 단어 하나가 틀렸거나 순서가 바뀌었을 "
+                       "가능성이 높습니다.")
+    return "ok", "{}단어 · 모두 BIP39 단어 · 체크섬 정상".format(len(words))
+
+
 def fingerprint(config):
     """Identifies a config, so a resume file cannot be applied to a different search."""
     return hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()[:16]
@@ -79,9 +164,10 @@ def fingerprint(config):
 def humanize(seconds):
     if seconds is None or seconds != seconds or seconds == float("inf"):
         return "계산 중"
+    if seconds < 1:       return "1초 미만"      # "0초 만에 찾았습니다" reads as a bug
     seconds = int(seconds)
     if seconds < 60:      return "{}초".format(seconds)
-    if seconds < 3600:    return "{}분".format(seconds // 60)
+    if seconds < 3600:    return "{}분 {}초".format(seconds // 60, seconds % 60)
     if seconds < 172800:  return "{:.1f}시간".format(seconds / 3600)
     if seconds < 63072000: return "{:.1f}일".format(seconds / 86400)
     return "{:,}년".format(int(seconds / 31557600))
@@ -97,6 +183,7 @@ class RecoveryApp(tk.Tk):
 
         self._install_palette()
         self._install_fonts()
+        self._install_menu()
         self.config_path = None
         self.config_data = None
         self.plan = None
@@ -111,6 +198,54 @@ class RecoveryApp(tk.Tk):
         container.pack(fill="both", expand=True)
         self.container = container
         self.show_checks()
+
+    def _install_menu(self):
+        """An Edit menu, which is what makes Cmd+V work at all.
+
+        Tk on macOS delivers Command-key shortcuts through the menu bar. With no Edit menu
+        there is nothing to deliver them to, so Cmd+V does nothing in every text field --
+        and the seed phrase field is the one place where that matters most. Twenty-four
+        words typed by hand is twenty-four chances to get one wrong, and a wrong word means
+        a search that cannot succeed and gives no hint why.
+
+        The items fire Tk's virtual events, so the same menu drives Ctrl+V elsewhere.
+        """
+        bar = tk.Menu(self)
+        edit = tk.Menu(bar, tearoff=0)
+        for label, event in (("잘라내기", "<<Cut>>"), ("복사", "<<Copy>>"),
+                             ("붙여넣기", "<<Paste>>")):
+            edit.add_command(
+                label=label, accelerator="Cmd+" + label[0],
+                command=lambda e=event: self._to_focused(e))
+        edit.add_separator()
+        edit.add_command(label="전체 선택", command=lambda: self._select_all())
+        bar.add_cascade(label="편집", menu=edit)
+        try:
+            self.config(menu=bar)
+        except tk.TclError:
+            pass                      # a platform without a menu bar; the field still works
+
+    def _to_focused(self, virtual_event):
+        widget = self.focus_get()
+        if widget is not None:
+            widget.event_generate(virtual_event)
+            self.after_idle(self._count_words_if_open)
+
+    def _select_all(self):
+        widget = self.focus_get()
+        if isinstance(widget, tk.Text):
+            widget.tag_add("sel", "1.0", "end-1c")
+        elif widget is not None:
+            try:
+                widget.selection_range(0, "end")
+            except (tk.TclError, AttributeError):
+                pass
+
+    def _count_words_if_open(self):
+        # a paste puts no key event in front of the counter, so it would sit at "0 단어"
+        # next to a field with twelve words in it
+        if getattr(self, "word_count", None) and self.word_count.winfo_exists():
+            self._count_words()
 
     def _install_palette(self):
         """Colours picked from the theme rather than written down.
@@ -133,6 +268,7 @@ class RecoveryApp(tk.Tk):
             "ok":    "#4ade80" if dark else "#15803d",
             "warn":  "#fbbf24" if dark else "#a16207",
             "bad":   "#f87171" if dark else "#b91c1c",
+            "accent": "#a78bfa" if dark else "#6d28d9",
         }
 
     def _install_fonts(self):
@@ -149,6 +285,10 @@ class RecoveryApp(tk.Tk):
         self.bold = tkfont.Font(font=tkfont.nametofont("TkDefaultFont"))
         self.bold.configure(size=13, weight="bold")
         # The one line a customer must not skim past gets its own size.
+        self.huge = tkfont.Font(font=tkfont.nametofont("TkDefaultFont"))
+        self.huge.configure(size=34, weight="bold")
+        self.small = tkfont.Font(font=tkfont.nametofont("TkDefaultFont"))
+        self.small.configure(size=11)
         self.alarm = tkfont.Font(font=tkfont.nametofont("TkDefaultFont"))
         self.alarm.configure(size=15, weight="bold")
 
@@ -185,8 +325,27 @@ class RecoveryApp(tk.Tk):
     # ---- screen plumbing -------------------------------------------------
 
     def _clear(self):
+        """Empty the container, and make sure whatever replaces it actually gets painted.
+
+        Every screen is built by destroying the previous one and packing a new set of
+        widgets. On macOS with Tk 9 that can leave the window showing the old content, or
+        nothing, until some event arrives -- a click, a resize -- and forces a redraw. The
+        program is not stuck and nothing has failed, but the person in front of it has no
+        way to know that, and clicking an apparently empty window to see what happens is a
+        bad thing to ask of someone who was told to be careful.
+
+        after_idle runs once the caller has finished packing the new screen, so this is one
+        place rather than one line at the end of all five.
+        """
         for child in self.container.winfo_children():
             child.destroy()
+        self.after_idle(self._repaint)
+
+    def _repaint(self):
+        try:
+            self.update_idletasks()
+        except tk.TclError:
+            pass                      # the window went away between the schedule and now
 
     def _heading(self, text, subtitle=None):
         ttk.Label(self.container, text=text, font=self.title_font).pack(anchor="w")
@@ -396,9 +555,18 @@ class RecoveryApp(tk.Tk):
         self.mnemonic_text.pack(fill="x", pady=(0, 6))
         self.mnemonic_text.focus_set()
 
-        self.word_count = ttk.Label(self.container, text="0 단어", foreground=self.c["muted"])
-        self.word_count.pack(anchor="w")
+        status = ttk.Frame(self.container)
+        status.pack(fill="x")
+        self.word_count = ttk.Label(status, text="0 단어", foreground=self.c["muted"])
+        self.word_count.pack(side="left", padx=(0, 10))
+        # Checked while it is being typed. Told now, a wrong word costs a second; told
+        # nothing, it costs the whole search and explains nothing at the end of it.
+        self.seed_status = ttk.Label(status, text="", font=self.bold)
+        self.seed_status.pack(side="left")
         self.mnemonic_text.bind("<KeyRelease>", self._count_words)
+        # Ctrl+V and the menu both raise this; without it a pasted phrase reads "0 단어"
+        self.mnemonic_text.bind("<<Paste>>",
+                                lambda _e: self.after_idle(self._count_words_if_open))
 
         ttk.Label(self.container, foreground=self.c["warn"], wraplength=640, justify="left",
                   text="복구에 성공하면 자금을 곧바로 새 지갑으로 옮기세요. 이 시드 문구는 "
@@ -472,8 +640,15 @@ class RecoveryApp(tk.Tk):
         return
 
     def _count_words(self, _event=None):
-        words = self.mnemonic_text.get("1.0", "end").split()
-        self.word_count.configure(text="{} 단어".format(len(words)))
+        text = self.mnemonic_text.get("1.0", "end")
+        self.word_count.configure(text="{} 단어".format(len(text.split())))
+        if getattr(self, "seed_status", None) is None:
+            return
+        language = (self.config_data or {}).get("wallet", {}).get("language")
+        state, message = check_mnemonic(text, language)
+        colour = {"ok": self.c["ok"], "bad": self.c["bad"]}.get(state, self.c["muted"])
+        self.seed_status.configure(text=message, foreground=colour)
+        self.seed_state = state
 
     # ---- 4. searching ----------------------------------------------------
 
@@ -488,6 +663,17 @@ class RecoveryApp(tk.Tk):
         # their machine or claim their network is a false positive. From here on there is
         # a seed phrase in memory, so the question gets asked once, plainly, defaulting to
         # no.
+        # Refused, not asked about. A phrase that fails its own checksum is not a judgement
+        # call -- it cannot be the phrase that made this wallet, and searching it would burn
+        # days to arrive at "not found", which is the one answer guaranteed in advance.
+        state, message = check_mnemonic(
+            mnemonic, (self.config_data.get("wallet") or {}).get("language"))
+        if state == "bad":
+            messagebox.showerror(
+                "시드 문구를 확인해 주세요", message + "\n\n"
+                "이대로는 찾을 수 없습니다. 적어 두신 종이와 한 단어씩 맞춰 보세요.")
+            return
+
         if has_default_route() and not messagebox.askokcancel(
                 "네트워크에 연결된 채로 진행합니다",
                 "이 컴퓨터는 지금 인터넷에 연결되어 있습니다.\n\n"
@@ -520,12 +706,26 @@ class RecoveryApp(tk.Tk):
         self._heading("찾는 중",
                       "이 창을 닫지 마세요. 중단하면 진행 위치가 저장되어 다음에 이어서 할 수 있습니다.")
 
+        # A search runs for hours or days. Someone glancing at the window from across a
+        # room needs to see that it is alive and roughly where it is, without reading.
+        self.stat_percent = ttk.Label(self.container, text="0.0%", font=self.huge,
+                                      foreground=self.c["accent"])
+        self.stat_percent.pack(anchor="w")
         self.bar = ttk.Progressbar(self.container, mode="determinate", maximum=1000)
-        self.bar.pack(fill="x", pady=(0, 10))
-        self.stat_tried = ttk.Label(self.container, text="", font=self.mono)
-        self.stat_tried.pack(anchor="w")
-        self.stat_rate = ttk.Label(self.container, text="", foreground=self.c["muted"])
-        self.stat_rate.pack(anchor="w", pady=(4, 0))
+        self.bar.pack(fill="x", pady=(6, 12))
+
+        grid = ttk.Frame(self.container)
+        grid.pack(fill="x")
+        self.stat_cells = {}
+        for column, (key, label) in enumerate((("tried", "확인한 후보"), ("elapsed", "경과"),
+                                               ("remaining", "남은 예상"), ("rate", "속도"))):
+            cell = ttk.Frame(grid)
+            cell.grid(row=0, column=column, sticky="w", padx=(0, 26))
+            ttk.Label(cell, text=label, foreground=self.c["dim"], font=self.small
+                      ).pack(anchor="w")
+            value = ttk.Label(cell, text="—", font=self.bold)
+            value.pack(anchor="w")
+            self.stat_cells[key] = value
 
         nav = ttk.Frame(self.container)
         nav.pack(side="bottom", fill="x")
@@ -542,13 +742,15 @@ class RecoveryApp(tk.Tk):
         elapsed = time.monotonic() - self.started_at
         rate = tried / elapsed if elapsed > 0 else 0
 
+        share = (tried / total) if total else 0.0
         if total:
-            self.bar.configure(value=min(1000, int(1000 * tried / total)))
-        self.stat_tried.configure(text="{:,} / {:,}   ({:.1f}%)".format(
-            tried, total, 100.0 * tried / total if total else 0.0))
+            self.bar.configure(value=min(1000, int(1000 * share)))
+        self.stat_percent.configure(text="{:.1f}%".format(100.0 * share))
         remaining = (total - tried) / rate if rate > 0 else None
-        self.stat_rate.configure(text="{:,.0f}개/초   경과 {}   남은 예상 {}".format(
-            rate, humanize(elapsed), humanize(remaining)))
+        self.stat_cells["tried"].configure(text="{:,} / {:,}".format(tried, total))
+        self.stat_cells["elapsed"].configure(text=humanize(elapsed))
+        self.stat_cells["remaining"].configure(text=humanize(remaining))
+        self.stat_cells["rate"].configure(text="{:,.0f}개/초".format(rate))
 
         if self.result is None:
             self.after(200, self._poll)
@@ -566,7 +768,23 @@ class RecoveryApp(tk.Tk):
             ttk.Label(self.container, text=result.error, foreground=self.c["bad"],
                       wraplength=640, justify="left").pack(anchor="w")
         elif result.found:
-            self._heading("찾았습니다")
+            # This is the thing the whole program exists to say, arrived at after hours or
+            # days of a window that looked like it was doing nothing. It should not read
+            # like a status line.
+            self._clear()
+            banner = ttk.Frame(self.container)
+            banner.pack(fill="x", pady=(0, 4))
+            self._icon(banner, "ok", 40).pack(side="left", padx=(0, 14))
+            said = ttk.Frame(banner)
+            said.pack(side="left", fill="x", expand=True)
+            ttk.Label(said, text="찾았습니다", font=self.huge,
+                      foreground=self.c["ok"]).pack(anchor="w")
+            ttk.Label(said, foreground=self.c["muted"], font=self.bold,
+                      text="{} 만에, 후보 {:,}개를 확인해서 찾았습니다.".format(
+                          humanize(result.elapsed),
+                          self.skip + result.tried)).pack(anchor="w", pady=(2, 0))
+            ttk.Frame(self.container, height=14).pack()
+
             found = ttk.LabelFrame(self.container, text=" 패스프레이즈 ", padding=14)
             found.pack(fill="x", pady=(0, 12))
             value = tk.Text(found, height=2, wrap="word", font=self.mono, relief="flat")
@@ -607,8 +825,9 @@ class RecoveryApp(tk.Tk):
                       text="보내기 전에 받는 주소를 하드웨어 지갑 화면에서 직접 확인하세요."
                       ).pack(anchor="w", pady=(10, 0))
             ttk.Label(after, wraplength=600, justify="left", text=(
-                "앱 화면의 주소와 기기 화면의 주소가 다르면 중단하세요. 방송에 쓰는 기기는 "
-                "개인키를 보지 못하므로 훔칠 것이 없지만, 받는 주소를 바꿔치기할 수는 있습니다."
+                "앱 화면의 주소와 기기 화면의 주소가 다르면 중단하세요. 거래를 만들어 "
+                "네트워크에 올리는 기기는 개인키를 보지 못하므로 훔칠 것이 없지만, "
+                "받는 주소를 바꿔치기할 수는 있습니다."
             )).pack(anchor="w", pady=(4, 0))
 
             # Broadcasting needs a network, so this cannot end offline. What it does not
@@ -616,7 +835,8 @@ class RecoveryApp(tk.Tk):
             # not better: two fees, and the coins sit under a key held on a networked
             # device in between.
             ttk.Label(after, foreground=self.c["warn"], wraplength=600, justify="left", text=(
-                "방송에는 인터넷에 연결된 기기가 하나 필요하지만, 그것이 이 컴퓨터일 필요는 "
+                "거래를 네트워크에 올리려면 인터넷에 연결된 기기가 하나 필요하지만, "
+                "그것이 이 컴퓨터일 필요는 "
                 "없습니다. 하드웨어 지갑을 쓰면 서명이 기기 안에서 끝나므로 시드 문구가 인터넷에 "
                 "연결된 기기에 올라가지 않습니다. BIP39 패스프레이즈를 지원하는 기기여야 합니다 "
                 "\u2014 Ledger, Trezor, ColdCard 모두 지원합니다. 중간에 다른 지갑을 거치지 "
@@ -652,7 +872,7 @@ class RecoveryApp(tk.Tk):
             details = ttk.LabelFrame(self.container, text=" 실행 기록 ", padding=8)
             details.pack(fill="both", expand=True, pady=(12, 0))
             box = tk.Text(details, height=8, wrap="word", font=self.mono)
-            box.insert("1.0", result.log.strip() or "(없음)")
+            box.insert("1.0", self._tidy_log(result.log) or "(없음)")
             box.configure(state="disabled")
             box.pack(fill="both", expand=True)
 
@@ -661,6 +881,25 @@ class RecoveryApp(tk.Tk):
         ttk.Button(nav, text="처음으로", command=self.show_checks).pack(side="left")
         ttk.Button(nav, text="닫기", command=self.destroy).pack(side="right")
 
+
+    # Lines btcrecover writes for someone at a command line. In a window they are advice
+    # nobody can take -- there is no flag to add -- and they sit between the two lines that
+    # do matter: which backend was chosen, and whether a seed word was substituted.
+    LOG_NOISE = (
+        "Use --skip-pre-start to skip",
+        "This can be overridden with --mnemonic-length",
+        "Add --no-dupchecks up to 4 times",
+        "Wallet Type: btcrpass.",
+    )
+
+    @classmethod
+    def _tidy_log(cls, log):
+        kept = []
+        for line in (log or "").splitlines():
+            if any(noise in line for noise in cls.LOG_NOISE):
+                continue
+            kept.append(line)
+        return "\n".join(kept).strip()
 
     def _miss_text(self):
         """What "not found" means, which is different when only a part was searched.
