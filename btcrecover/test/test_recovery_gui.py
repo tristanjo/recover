@@ -125,15 +125,23 @@ class Helpers(unittest.TestCase):
     def test_help_exits_cleanly_without_opening_a_window(self):
         """run-all-tests.py runs every script in the repository with --help and accepts
         only a clean exit. Falling through to the window instead fails on a headless
-        machine and hangs on a desktop one, holding the window open forever."""
+        machine and hangs on a desktop one, holding the window open forever.
+
+        The verdict is the exit code alone. Reading the child's output would tie this to
+        how the parent's locale decodes Korean -- cp1252 on a Windows runner -- and that
+        is a second thing to get wrong, not a second thing being tested.
+        """
         import subprocess
-        root = os.path.join(os.path.dirname(__file__), "..", "..")
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
         for flag in ("--help", "-h"):
             with self.subTest(flag):
                 done = subprocess.run([sys.executable, "recovery_gui.py", flag],
-                                      cwd=root, capture_output=True, text=True, timeout=120)
-                self.assertEqual(done.returncode, 0, done.stderr[-2000:])
-                self.assertIn("--self-test", done.stdout)
+                                      cwd=root, capture_output=True, timeout=120)
+                detail = "\n".join(
+                    name + ": " + (stream or b"").decode("utf-8", "replace")[-1500:]
+                    for name, stream in (("stdout", done.stdout), ("stderr", done.stderr)))
+                self.assertEqual(done.returncode, 0, detail)
+                self.assertIn(b"--self-test", done.stdout or b"")
 
     def test_the_self_test_uses_the_published_bip39_vector(self):
         plan = embed.SearchPlan(recovery_gui.SELF_TEST["config"])
