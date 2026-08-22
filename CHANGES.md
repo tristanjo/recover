@@ -43,10 +43,25 @@ renders as an empty box on a Windows without the right font.
 
 **The success screen says what to do, not just that there is a risk.** Nobody can prove a
 seed did not leak. What can be done is make a leak worthless, and that is an action the
-customer takes in the next few minutes — on the last screen anyone reads. It now gives the
-steps, and gets the order right: moving coins needs a network, so "stay offline" cannot be
-the whole advice. The exposure begins when the machine reconnects, which makes the ordering
-the thing to say — reconnect, then move the funds before anything else gets a turn.
+customer takes in the next few minutes — on the last screen anyone reads.
+
+The first version of these steps was wrong in a way worth writing down: it said to reconnect
+this computer and then race. That is the one machine that should never go back online, and
+it does not have to. Broadcasting needs a networked device, but the recovered seed can be
+restored onto a hardware wallet, the transaction built in the phone app paired to it, and
+the signing done inside the device — the private key never reaches anything networked, and
+the recovery machine stays off the internet for good.
+
+Two things were added on top of that. A single hop straight to the final address, because
+passing through a phone wallet on the way costs a second fee and parks the coins under a key
+held on a networked device. And, in its own line and its own weight, **verify the receiving
+address on the hardware wallet's own screen**: the broadcasting device holds no key so it
+has nothing to steal, but it can display one address and send to another, and that check is
+the only defence and the step people skip.
+
+For someone with no hardware wallet, waiting for delivery is not a neutral choice — if the
+seed did leak, the race is already running. The screen says to move the coins somewhere they
+control today, and move them again when the device arrives.
 
 `docs/One_Binary_For_Everyone.md` records why every customer gets the same executable
 rather than one built with their address compiled in: the licence obliges us to hand over

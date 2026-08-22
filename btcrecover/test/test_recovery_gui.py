@@ -293,11 +293,28 @@ class Screens(unittest.TestCase):
         self.assertIn("지금 해야 할 일", screen)
         for step in ("새 지갑", "보냅니다", "종이에"):
             self.assertIn(step, screen)
-        # Moving coins needs a network, so "stay offline" cannot be the whole advice --
-        # the exposure begins when the machine reconnects, which makes the order the
-        # thing to say. Advice that cannot be followed is worse than none.
-        self.assertIn("연결", screen)
-        self.assertIn("먼저", screen)
+
+        # Broadcasting needs a network, so this cannot end offline -- but it must not be
+        # *this* machine that reconnects. Telling someone to plug the computer that just
+        # held their seed back in, and then race, is the wrong instruction: a hardware
+        # wallet signs on the device, so the seed never reaches an online computer.
+        self.assertIn("계속 오프라인", screen)
+        self.assertIn("하드웨어 지갑", screen)
+        self.assertNotIn("인터넷을 다시 연결하고", screen)
+
+        # The broadcasting device holds no key, so it cannot steal -- but it can show one
+        # address and send to another. Verifying on the device's own screen is the only
+        # defence and the step people skip, so it has to be on this screen in its own right.
+        self.assertIn("하드웨어 지갑 화면에서 직접 확인", screen)
+
+        # A hop through a phone wallet on the way is worse, not better: two fees, and the
+        # coins sit under a key held on a networked device in between.
+        self.assertIn("한 번에", screen)
+
+        # And someone with no hardware wallet still needs an answer today; if the seed did
+        # leak, waiting for delivery is not a neutral choice.
+        self.assertIn("하드웨어 지갑이 없다면", screen)
+
         # and it must not claim more than it can: no promise that nothing leaked
         self.assertNotIn("안전합니다", screen)
 

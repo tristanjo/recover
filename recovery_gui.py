@@ -360,8 +360,9 @@ class RecoveryApp(tk.Tk):
         ttk.Label(self.container, foreground="#b45309", wraplength=640, justify="left",
                   text="복구에 성공하면 자금을 곧바로 새 지갑으로 옮기세요. 이 시드 문구는 "
                        "복구 과정에서 이 컴퓨터의 메모리를 거치므로 더 이상 안전하다고 볼 수 "
-                       "없습니다. 송금에는 인터넷이 필요한데, 다시 연결하는 순간이 가장 위험한 "
-                       "순간입니다 \u2014 연결한 뒤에는 다른 무엇보다 먼저 자금을 옮기세요."
+                       "없습니다. 이 컴퓨터를 다시 인터넷에 연결할 필요는 없습니다 \u2014 "
+                       "하드웨어 지갑에 복구한 뒤 다른 기기에서 보내면 됩니다. 자세한 순서는 "
+                       "찾은 뒤에 안내합니다."
                   ).pack(anchor="w", pady=(12, 0))
 
         # This is the only screen where a secret is typed, so this is where the network
@@ -531,17 +532,47 @@ class RecoveryApp(tk.Tk):
                       text="찾은 즉시 자금을 새 지갑으로 옮기세요.").pack(anchor="w")
             ttk.Label(after, wraplength=600, justify="left", text=(
                 "1.  위 패스프레이즈를 종이에 옮겨 적습니다.\n"
-                "2.  믿을 수 있는 기기에서 새 지갑을 만듭니다 (새 시드 문구).\n"
-                "3.  인터넷을 다시 연결하고, 그 즉시 이 지갑의 자금 전부를 새 주소로 보냅니다.\n"
-                "4.  새 시드 문구를 종이에 적어 보관합니다."
+                "2.  이 컴퓨터는 계속 오프라인으로 두세요. 다시 연결할 필요가 없습니다.\n"
+                "3.  하드웨어 지갑에서 새 지갑을 만들고 받을 주소를 확인합니다.\n"
+                "     새 시드 문구는 이 컴퓨터에 절대 입력하지 마세요.\n"
+                "4.  찾은 시드 문구와 패스프레이즈로 원래 지갑을 하드웨어 지갑에 복구하고,\n"
+                "     하드웨어 지갑과 연동된 휴대폰 앱에서 거래를 만들어 3번 주소로\n"
+                "     자금 전부를 한 번에 보냅니다. 서명은 하드웨어 지갑 안에서 이뤄지고,\n"
+                "     개인키는 앱으로 전달되지 않습니다.\n"
+                "5.  새 시드 문구를 종이에 적어 보관합니다."
             )).pack(anchor="w", pady=(6, 0))
-            # Moving coins needs a network, so "stay offline" cannot be the whole advice.
-            # The exposure starts when the machine reconnects, which makes the order the
-            # thing that matters: reconnect, then move, before anything else gets a turn.
+
+            # The device that broadcasts never sees a private key, so it has nothing to
+            # steal. What it can do is show one address and send to another, and the only
+            # defence is the hardware wallet's own screen. It is the step people skip.
+            ttk.Label(after, foreground="#b91c1c", font=self.bold, wraplength=600,
+                      justify="left",
+                      text="보내기 전에 받는 주소를 하드웨어 지갑 화면에서 직접 확인하세요."
+                      ).pack(anchor="w", pady=(10, 0))
+            ttk.Label(after, wraplength=600, justify="left", text=(
+                "앱 화면의 주소와 기기 화면의 주소가 다르면 중단하세요. 방송에 쓰는 기기는 "
+                "개인키를 보지 못하므로 훔칠 것이 없지만, 받는 주소를 바꿔치기할 수는 있습니다."
+            )).pack(anchor="w", pady=(4, 0))
+
+            # Broadcasting needs a network, so this cannot end offline. What it does not
+            # need is *this* machine. And a middle hop through a phone wallet is worse,
+            # not better: two fees, and the coins sit under a key held on a networked
+            # device in between.
             ttk.Label(after, foreground="#b45309", wraplength=600, justify="left", text=(
-                "송금에는 인터넷 연결이 필요합니다. 다시 연결하는 순간이 가장 위험한 "
-                "순간이므로, 연결한 뒤에는 다른 무엇보다 먼저 자금 이동을 하세요. "
-                "가능하다면 이 컴퓨터가 아닌 다른 기기에서 하시는 편이 낫습니다."
+                "방송에는 인터넷에 연결된 기기가 하나 필요하지만, 그것이 이 컴퓨터일 필요는 "
+                "없습니다. 하드웨어 지갑을 쓰면 서명이 기기 안에서 끝나므로 시드 문구가 인터넷에 "
+                "연결된 기기에 올라가지 않습니다. BIP39 패스프레이즈를 지원하는 기기여야 합니다 "
+                "\u2014 Ledger, Trezor, ColdCard 모두 지원합니다. 중간에 다른 지갑을 거치지 "
+                "말고 최종 주소로 한 번에 보내세요."
+            )).pack(anchor="w", pady=(8, 0))
+
+            # Waiting for hardware to arrive is not free: if the seed did leak, the race is
+            # already running. Somewhere imperfect but under their control, today, beats
+            # perfect in three days.
+            ttk.Label(after, foreground="#555", wraplength=600, justify="left", text=(
+                "하드웨어 지갑이 없다면 — 주문해서 기다리는 동안에도 위험은 계속됩니다. "
+                "본인 명의 거래소 계정이나 새로 설치한 휴대폰 지갑으로 먼저 옮겨 두고, "
+                "기기가 도착하면 그때 다시 옮기세요."
             )).pack(anchor="w", pady=(8, 0))
             ttk.Label(after, foreground="#555", wraplength=600, justify="left", text=(
                 "이 시드 문구와 패스프레이즈는 방금 이 컴퓨터의 메모리를 거쳤습니다. "
