@@ -17,6 +17,33 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
+## 2026-08-22 — Ask before measuring anyone's computer
+
+**Changed:** `webapp/diagnostic.html`, `btcrecover/test/test_webapp_model.py`
+
+The benchmark ran by itself when the page loaded. Technically that was fine — it reads no
+CPU model, keeps nothing, and sends nothing — but starting to time a stranger's processor
+the moment they arrive looks exactly like fingerprinting, and the customer has no way to
+tell the difference from the outside. It now waits to be asked.
+
+Until the button is pressed the estimate is computed from the reference machine and the
+page says so. Pressing it measures; nothing is stored, so a reload returns to the
+unmeasured state.
+
+"무엇을 어떻게 재나요?" opens a modal that answers the suspicion directly rather than
+asking to be trusted: what is computed (PBKDF2-HMAC-SHA512, 2048 rounds, on invented
+strings — nothing the visitor typed), what cannot be read (CPU model, installed software,
+history — the browser does not expose them), that `navigator.hardwareConcurrency` is the
+single fact read and is shown in an editable field, that `connect-src 'none'` makes the
+no-network claim something the browser enforces, and the actual source of the measuring
+loop with the reason it takes a quantile rather than a mean.
+
+`Consent` in `test_webapp_model.py` fails if `runBenchmark()` is ever called from anywhere
+but a click handler, or if any browser storage appears. Checked by adding an auto-call and
+confirming the test goes red.
+
+---
+
 ## 2026-08-22 — Estimate the time on the customer's own machine
 
 **Changed:** `webapp/diagnostic.html`, `btcrecover/test/test_webapp_model.py` (new),

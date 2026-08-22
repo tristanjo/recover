@@ -158,5 +158,51 @@ class Measurement(unittest.TestCase):
             self.assertNotIn(forbidden, bench)
 
 
+class Consent(unittest.TestCase):
+    """Nothing is measured until the visitor asks for it.
+
+    Measuring a stranger's CPU the moment they open a page looks exactly like
+    fingerprinting, whatever it actually does. The page waits to be asked, and explains
+    itself when asked how.
+    """
+
+    def setUp(self):
+        self.source = page_source()
+
+    def test_nothing_runs_until_a_button_is_pressed(self):
+        # every call site must be a handler the visitor triggers, never the page bootstrap
+        code = re.sub(r"/\*.*?\*/", "", self.source, flags=re.S)      # drop comments
+        code = re.sub(r"(?m)^\s*//.*$", "", code)
+        sites = [m.start() for m in re.finditer(r"runBenchmark\s*\(", code)]
+        stray = [p for p in sites
+                 if not code[:p].rstrip().endswith("function")
+                 and 'onclick="' not in code[max(0, p - 60):p]]
+        self.assertTrue(sites, "the page no longer measures at all")
+        self.assertFalse(stray,
+                         "runBenchmark() runs {} time(s) outside a click handler; opening "
+                         "the page must not start a measurement".format(len(stray)))
+
+    def test_the_page_says_which_speed_it_is_using(self):
+        # before measuring, the estimate comes from the reference machine and must say so
+        self.assertIn("기준 컴퓨터", self.source)
+
+    def test_there_is_a_way_to_read_how_it_works(self):
+        self.assertIn('id="howmodal"', self.source)
+        self.assertIn("showHowModal", self.source)
+        for promised in ("PBKDF2-HMAC-SHA512", "hardwareConcurrency",
+                         "connect-src", "crypto.subtle"):
+            self.assertIn(promised, self.source.split('id="howmodal"')[1])
+
+    def test_the_modal_can_be_dismissed(self):
+        modal = self.source.split('id="howmodal"')[1].split("<script>")[0]
+        self.assertIn("hideHowModal", modal)
+        self.assertIn("Escape", self.source)
+
+    def test_nothing_about_the_visitor_is_kept(self):
+        # a measurement that survives a reload is a stored fact about someone's machine
+        for storage in ("localStorage", "sessionStorage", "document.cookie", "indexedDB"):
+            self.assertNotIn(storage, self.source)
+
+
 if __name__ == '__main__':
     unittest.main()
