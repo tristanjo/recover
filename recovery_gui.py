@@ -29,7 +29,9 @@ This program makes no network request of any kind. The connectivity check reads 
 local routing table without sending a packet; see `has_default_route`.
 """
 
-import difflib, hashlib, json, os, queue, socket, sys, threading, time, tkinter as tk
+import base64, difflib, hashlib, json, os, queue, socket, struct, sys, threading, time
+import tkinter as tk
+import zlib
 from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 from btcrecover import embed
@@ -198,6 +200,121 @@ def fingerprint(config):
     return hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()[:16]
 
 
+def _png_bytes(width, height, rows):
+    """A PNG in memory, so Tk can be handed an image with real transparency."""
+    raw = b"".join(b"\x00" + bytes(row) for row in rows)
+
+    def chunk(tag, payload):
+        body = tag + payload
+        return (struct.pack(">I", len(payload)) + body
+                + struct.pack(">I", zlib.crc32(body) & 0xffffffff))
+
+    head = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)   # 8-bit RGBA
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", head)
+            + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
+
+
+_ICON_CACHE = {}
+
+
+def _icon_png(kind, size, supersample=6):
+    """Draw the icon large and average it down, which is what makes the edges smooth.
+
+    Tk's own zoom and subsample pick nearest pixels rather than blending, so an icon
+    drawn at final size shows its staircase -- and a display that scales it up again
+    turns that into a smear. Drawn at four times and averaged, every edge pixel gets the
+    fraction of colour it actually covers, including its transparency.
+    """
+    cached = _ICON_CACHE.get((kind, size, supersample))
+    if cached is not None:
+        return cached                 # 36 samples a pixel is not worth repeating per screen
+
+    big = size * supersample
+    mid = big / 2.0
+
+    def circle(x, y):
+        radius = mid - size * 0.055 * supersample
+        d = ((x - mid) ** 2 + (y - mid) ** 2) ** 0.5
+        if d > radius:
+            return None
+        return (21, 128, 61) if d > radius - 1.5 * supersample else (22, 163, 74)
+
+    def triangle(x, y):
+        # apex at the top, base along the bottom, corners pulled in a little
+        top, bottom = size * 0.10 * supersample, size * 0.90 * supersample
+        if y < top or y > bottom:
+            return None
+        half = (y - top) / (bottom - top) * (mid - size * 0.08 * supersample)
+        if abs(x - mid) > half:
+            return None
+        edge = half - abs(x - mid) < 1.5 * supersample or bottom - y < 1.5 * supersample
+        return (153, 27, 27) if edge else (220, 38, 38)
+
+    def near_segment(x, y, ax, ay, bx, by, width):
+        dx, dy = bx - ax, by - ay
+        span = dx * dx + dy * dy
+        t = 0.0 if span == 0 else max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / span))
+        px, py = ax + dx * t, ay + dy * t
+        return ((x - px) ** 2 + (y - py) ** 2) ** 0.5 <= width / 2.0
+
+    if kind == "warn":
+        shape = triangle
+        bar = size * 0.11 * supersample
+
+        def mark(x, y):
+            return (near_segment(x, y, mid, size * 0.34 * supersample,
+                                 mid, size * 0.62 * supersample, bar)
+                    or near_segment(x, y, mid, size * 0.74 * supersample,
+                                    mid, size * 0.75 * supersample, bar))
+    else:
+        shape = circle
+        stroke = size * 0.115 * supersample
+        arm = ((0.29, 0.52), (0.44, 0.68), (0.73, 0.33))
+
+        def mark(x, y):
+            for i in range(len(arm) - 1):
+                ax, ay = arm[i][0] * big, arm[i][1] * big
+                bx, by = arm[i + 1][0] * big, arm[i + 1][1] * big
+                if near_segment(x, y, ax, ay, bx, by, stroke):
+                    return True
+            return False
+
+    # one pass at the large size, then average each block down to one pixel
+    plane = []
+    for y in range(big):
+        line = []
+        for x in range(big):
+            colour = shape(x + 0.5, y + 0.5)
+            if colour is None:
+                line.append(None)
+            elif mark(x + 0.5, y + 0.5):
+                line.append((255, 255, 255))
+            else:
+                line.append(colour)
+        plane.append(line)
+
+    area = supersample * supersample
+    rows = []
+    for y in range(size):
+        row = bytearray()
+        for x in range(size):
+            r = g = b = covered = 0
+            for sy in range(supersample):
+                for sx in range(supersample):
+                    pixel = plane[y * supersample + sy][x * supersample + sx]
+                    if pixel is not None:
+                        r += pixel[0]; g += pixel[1]; b += pixel[2]; covered += 1
+            if covered:
+                row += bytes((r // covered, g // covered, b // covered,
+                              covered * 255 // area))
+            else:
+                row += b"\x00\x00\x00\x00"
+        rows.append(row)
+    encoded = base64.b64encode(_png_bytes(size, size, rows))
+    _ICON_CACHE[(kind, size, supersample)] = encoded
+    return encoded
+
+
 def humanize(seconds):
     if seconds is None or seconds != seconds or seconds == float("inf"):
         return "계산 중"
@@ -307,15 +424,20 @@ class RecoveryApp(tk.Tk):
 
         The items fire Tk's virtual events, so the same menu drives Ctrl+V elsewhere.
         """
+        # The accelerator has to name the real key. It was built from the first character
+        # of the Korean label, so Paste registered as "Cmd+붙" -- a key equivalent that no
+        # keyboard can produce, on the one menu item macOS routes Cmd+V to.
+        mac = sys.platform == "darwin"
         bar = tk.Menu(self)
         edit = tk.Menu(bar, tearoff=0)
-        for label, event in (("잘라내기", "<<Cut>>"), ("복사", "<<Copy>>"),
-                             ("붙여넣기", "<<Paste>>")):
+        for label, event, key in (("잘라내기", "<<Cut>>", "X"), ("복사", "<<Copy>>", "C"),
+                                  ("붙여넣기", "<<Paste>>", "V")):
             edit.add_command(
-                label=label, accelerator="Cmd+" + label[0],
+                label=label, accelerator=("Command-" + key) if mac else ("Ctrl+" + key),
                 command=lambda e=event: self._to_focused(e))
         edit.add_separator()
-        edit.add_command(label="전체 선택", command=lambda: self._select_all())
+        edit.add_command(label="전체 선택", accelerator="Command-A" if mac else "Ctrl+A",
+                         command=lambda: self._select_all())
         bar.add_cascade(label="편집", menu=edit)
         try:
             self.config(menu=bar)
@@ -323,8 +445,16 @@ class RecoveryApp(tk.Tk):
             pass                      # a platform without a menu bar; the field still works
 
     def _to_focused(self, virtual_event):
+        """Send an edit event wherever the cursor is.
+
+        Falls back to the seed field: invoking a menu bar item can leave focus_get()
+        answering with the window rather than the field inside it, and the seed field is
+        the one this exists for.
+        """
         widget = self.focus_get()
-        if widget is not None:
+        if widget is None or widget is self:
+            widget = getattr(self, "mnemonic_text", None)
+        if widget is not None and widget.winfo_exists():
             widget.event_generate(virtual_event)
             self.after_idle(self._count_words_if_open)
 
@@ -388,20 +518,35 @@ class RecoveryApp(tk.Tk):
         self.small.configure(size=11)
         self.alarm = tkfont.Font(font=tkfont.nametofont("TkDefaultFont"))
         self.alarm.configure(size=15, weight="bold")
+        # The answer itself. It is what the customer copies onto paper by hand, so it is
+        # sized to be read across a desk, and monospaced so l and 1 and O and 0 stay apart.
+        self.answer = tkfont.Font(font=self.mono)
+        self.answer.configure(size=22, weight="bold")
 
     def _icon(self, parent, kind, size=28):
-        """A warning triangle or an all-clear tick, drawn into a transparent image.
+        """A warning triangle or an all-clear tick, on whatever the theme puts behind it.
 
-        Two earlier attempts were wrong in different ways. A Unicode glyph renders as an
+        Three earlier attempts were wrong in different ways. A Unicode glyph renders as an
         empty box on a Windows without the font. A tk.Canvas has to be painted some colour,
         and there is no colour that matches: on macOS the interior of a LabelFrame is not
         the window background, so the canvas showed up as a visible square sitting behind
-        the icon.
+        the icon. Putting single pixels into a PhotoImage fixed that -- put() leaves
+        everything it does not touch transparent -- but every edge was a staircase, and a
+        display that scales the image up smears the staircase.
 
-        A PhotoImage starts fully transparent and only the pixels drawn are opaque, so
-        whatever the theme puts behind it shows through -- light, dark, panel or window,
-        without asking what colour any of them are.
+        So it is drawn four times over and averaged down, into a PNG with real per-pixel
+        alpha. Edges get the fraction of colour they cover and the rest stays transparent.
         """
+        try:
+            image = tk.PhotoImage(data=_icon_png(kind, size))
+        except tk.TclError:
+            # A Tk without PNG support. Blocky beats absent.
+            image = self._icon_blocky(kind, size)
+        label = ttk.Label(parent, image=image)
+        label.image = image           # PhotoImage is collected the moment nothing holds it
+        return label
+
+    def _icon_blocky(self, kind, size):
         image = tk.PhotoImage(width=size, height=size)
         mid = size / 2.0
 
@@ -441,10 +586,7 @@ class RecoveryApp(tk.Tk):
                     y = (a[1] + (b[1] - a[1]) * t) * size
                     image.put("#ffffff", to=(int(x - thick / 2), int(y - thick / 2),
                                              int(x + thick / 2) + 1, int(y + thick / 2) + 1))
-
-        label = ttk.Label(parent, image=image)
-        label.image = image           # PhotoImage is collected the moment nothing holds it
-        return label
+        return image
 
     # ---- screen plumbing -------------------------------------------------
 
@@ -1027,10 +1169,16 @@ class RecoveryApp(tk.Tk):
 
             found = ttk.LabelFrame(self.container, text=" 패스프레이즈 ", padding=14)
             found.pack(fill="x", pady=(0, 12))
-            value = tk.Text(found, height=2, wrap="word", font=self.mono, relief="flat")
+            # height=2 left a blank line under a short passphrase, so the answer sat above
+            # the middle of its own box. Take only the lines the text needs.
+            lines = 1 + len(result.passphrase) // 34
+            value = tk.Text(found, height=min(3, lines), wrap="char", font=self.answer,
+                            relief="flat", padx=10, pady=8, foreground=self.c["ok"],
+                            highlightthickness=0, borderwidth=0)
             value.insert("1.0", result.passphrase)
             value.configure(state="disabled")
             value.pack(fill="x")
+            self._attach_edit_bindings(value)
             if result.normalization:
                 ttk.Label(found, foreground=self.c["muted"], wraplength=600, justify="left",
                           text="유니코드 형태: {}  —  화면으로는 구분되지 않으므로, 다른 지갑에 "
@@ -1184,10 +1332,6 @@ class RecoveryApp(tk.Tk):
         self.donate_field.configure(state="disabled")
         self.donate_field.pack(fill="x", pady=(8, 0))
         self._attach_edit_bindings(self.donate_field)
-        ttk.Label(holder, foreground=self.c["dim"], wraplength=620, justify="left",
-                  text="같은 주소가 저장소의 README.md 에도 적혀 있습니다. "
-                       "대조해 보실 수 있습니다."
-                  ).pack(anchor="w", pady=(6, 0))
 
     def _retry_other_seed(self):
         """Back to the seed field, with the search position reset.

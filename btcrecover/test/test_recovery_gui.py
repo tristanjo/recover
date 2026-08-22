@@ -370,6 +370,110 @@ class Screens(unittest.TestCase):
             del self.app._viewport.yview
         return moves
 
+    def test_the_edit_menu_names_the_keys_it_claims(self):
+        """The accelerator has to be the key, not a label.
+
+        It was built as "Cmd+" plus the first character of the Korean label, so Paste
+        registered as "Cmd+붙" -- an equivalent no keyboard can produce, on the one menu
+        item macOS routes Cmd+V to. Right-click pasted; the shortcut everybody reaches for
+        did not.
+        """
+        bar = self.app.nametowidget(self.app.cget("menu"))
+        edit = self.app.nametowidget(bar.entrycget(bar.index("편집"), "menu"))
+        wanted = {"잘라내기": "X", "복사": "C", "붙여넣기": "V", "전체 선택": "A"}
+        seen = {}
+        for i in range(edit.index("end") + 1):
+            if edit.type(i) != "command":
+                continue
+            seen[edit.entrycget(i, "label")] = edit.entrycget(i, "accelerator")
+        for label, key in wanted.items():
+            with self.subTest(item=label):
+                self.assertIn(label, seen, label + " left the Edit menu")
+                accelerator = seen[label]
+                self.assertTrue(accelerator, label + " has no accelerator at all")
+                self.assertTrue(accelerator.endswith(key),
+                                "{} says {!r}, which is not the {} key"
+                                .format(label, accelerator, key))
+                self.assertTrue(accelerator.isascii(),
+                                "{} says {!r}; an accelerator must name a real key"
+                                .format(label, accelerator))
+
+    def test_the_edit_menu_reaches_the_seed_field(self):
+        """Invoking from the menu bar can leave focus_get() answering with the window."""
+        self.app.show_mnemonic()
+        self.app.update_idletasks()
+        self.app.mnemonic_text.delete("1.0", "end")
+        self.app.clipboard_clear()
+        self.app.clipboard_append("abandon ability able")
+        self.app.focus_set()                      # as if the menu bar took the focus
+        self.app._to_focused("<<Paste>>")
+        self.app.update_idletasks()
+        self.assertIn("abandon", self.app.mnemonic_text.get("1.0", "end"),
+                      "the menu had nowhere to send the paste")
+
+    def test_the_icon_has_soft_edges(self):
+        """Drawn at four times and averaged, so edge pixels are partly transparent.
+
+        Putting single pixels into a PhotoImage left every edge a staircase, and a display
+        that scales the image up smears it. An icon with only 0 and 255 in its alpha
+        channel is the old one back again.
+        """
+        import base64, struct, zlib
+        raw = base64.b64decode(recovery_gui._icon_png("ok", 40))
+        self.assertTrue(raw.startswith(b"\x89PNG\r\n\x1a\n"))
+        width, height, depth, colour = struct.unpack(">IIBB", raw[16:26])
+        self.assertEqual((width, height, depth, colour), (40, 40, 8, 6), "not 8-bit RGBA")
+
+        data = b""
+        at = 8
+        while at < len(raw):                       # walk the chunks to find the pixels
+            size = struct.unpack(">I", raw[at:at + 4])[0]
+            if raw[at + 4:at + 8] == b"IDAT":
+                data += raw[at + 8:at + 8 + size]
+            at += size + 12
+        rows = zlib.decompress(data)
+        stride = width * 4 + 1
+        alphas = set()
+        for y in range(height):
+            row = rows[y * stride + 1:(y + 1) * stride]
+            for x in range(width):
+                alphas.add(row[x * 4 + 3])
+        self.assertIn(0, alphas, "nothing is transparent; it would sit on a coloured box")
+        self.assertIn(255, alphas, "nothing is solid")
+        partial = [a for a in alphas if 0 < a < 255]
+        self.assertGreater(len(partial), 10,
+                           "only {} shades between; the edges are a staircase"
+                           .format(len(partial)))
+
+    def test_the_icon_on_screen_is_the_smooth_one(self):
+        """Checking the drawing is not enough; the screen has to be using it.
+
+        The first version of this test called _icon_png() directly, so reverting _icon()
+        to the pixel-by-pixel fallback left it green.
+        """
+        holder = recovery_gui.ttk.Frame(self.app)
+        try:
+            label = self.app._icon(holder, "ok", 40)
+            data = label.image.cget("data")
+        finally:
+            holder.destroy()
+        self.assertTrue(data, "the icon was built pixel by pixel, not from an image")
+        # Tk hands it back as bytes; str() on those would put a b'' wrapper in front
+        text = data.decode("ascii", "replace") if isinstance(data, bytes) else str(data)
+        self.assertTrue(text.lstrip().startswith("iVBORw0KGgo"),
+                        "the icon is not the PNG one")
+
+    def test_the_answer_is_bigger_than_everything_around_it(self):
+        # it is read off the screen and copied onto paper by hand
+        self.assertGreater(self.app.answer.cget("size"), self.app.mono.cget("size"))
+        self.assertGreater(self.app.answer.cget("size"), self.app.alarm.cget("size"))
+
+    def test_the_donation_address_stands_on_its_own(self):
+        # the README cross-check line was removed; nothing should point at the repository
+        source = read_source()
+        after = source[source.index("_show_donation_address"):]
+        self.assertNotIn("README", after[:1200])
+
     def test_the_wheel_handler_scrolls_when_there_is_somewhere_to_go(self):
         """Tests the decision, not Tk's geometry.
 

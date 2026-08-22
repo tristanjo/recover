@@ -17,6 +17,30 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
+## Cmd+V, and the moment of success
+
+Right-click pasted; Cmd+V did not, in the one field where typing by hand is worst. The
+accelerator on the Edit menu was built from the first character of the Korean label, so
+Paste registered as `Cmd+붙` -- a key equivalent no keyboard can produce, on the one menu
+item macOS routes Cmd+V to. The accelerators name real keys now, and the menu's paste
+falls back to the seed field when invoking from the menu bar leaves `focus_get()`
+answering with the window.
+
+The tick on the success screen was drawn a pixel at a time, so every edge was a staircase
+and a display that scales it up smeared it. It is drawn six times over and averaged into
+a PNG with real per-pixel alpha -- 13 shades of edge where there were none -- and cached,
+since 36 samples a pixel is 39ms and every screen was redrawing it.
+
+The passphrase itself is 22pt and green now, in a box sized to the lines it needs.
+`height=2` left a blank line under a short passphrase, so the answer sat above the middle
+of its own box. It is what the customer copies onto paper by hand.
+
+The README cross-check line under the donation address is gone.
+
+Each of these is held by a test that was checked by breaking the thing it guards. The
+first version of the icon test called the drawing function directly, so reverting the
+screen to the old renderer left it green; it asks the label what it is showing now.
+
 ## The Windows job was reporting success over a red suite
 
 `test_cjk_passphrase` -- the suite covering this fork's whole reason for existing -- has
