@@ -315,9 +315,20 @@ class RecoveryApp(tk.Tk):
             ("확인할 지갑 주소", "\n".join(plan.addresses)),
             ("파생 경로", "  ".join(plan.derivation_paths)),
             ("주소 탐색 개수", str(plan.address_limit)),
-            ("시도할 패스프레이즈", "{:,}개".format(total)),
+            ("시도할 패스프레이즈", "{:,}개{}".format(
+                total,
+                "" if len(plan.normalizations) < 2 else
+                "  (정규화 형태별로 최대 {}번씩)".format(len(plan.normalizations)))),
             ("유니코드 정규화", ", ".join(plan.normalizations)),
         ]
+        if plan.of > 1:
+            # Say it here, before the search starts, and again if it finds nothing. Someone
+            # who forgets they are running a seventh of the work will read "not found" as
+            # "the passphrase is not in this range", which is the wrong conclusion and the
+            # expensive one -- they stop.
+            rows.insert(3, ("나눠 돌리는 중",
+                            "전체 {:,}개 중 {}번째 구간 ({}개로 분할)".format(
+                                plan.total_count(), plan.part, plan.of)))
         if self.skip:
             rows.append(("이어서 시작", "{:,}번째부터 (남은 {:,}개)".format(self.skip, total - self.skip)))
         for i, (label, value) in enumerate(rows):
@@ -589,10 +600,7 @@ class RecoveryApp(tk.Tk):
         else:
             self._heading("찾지 못했습니다")
             ttk.Label(self.container, wraplength=640, justify="left",
-                      text="설정된 {:,}개 후보를 모두 확인했지만 일치하는 것이 없었습니다.\n\n"
-                           "시드 문구를 잘못 입력했거나, 실제 패스프레이즈가 이 조합 범위 밖에 "
-                           "있습니다. 기억나는 조각을 다시 정리해 새 설정 파일을 받아 보세요."
-                           .format(self.plan.candidate_count())).pack(anchor="w")
+                      text=self._miss_text()).pack(anchor="w")
 
         if result.log:
             details = ttk.LabelFrame(self.container, text=" 실행 기록 ", padding=8)
@@ -606,6 +614,26 @@ class RecoveryApp(tk.Tk):
         nav.pack(side="bottom", fill="x", pady=(12, 0))
         ttk.Button(nav, text="처음으로", command=self.show_checks).pack(side="left")
         ttk.Button(nav, text="닫기", command=self.destroy).pack(side="right")
+
+
+    def _miss_text(self):
+        """What "not found" means, which is different when only a part was searched.
+
+        Someone running a seventh of the work will read a plain "not found" as "the
+        passphrase is not in this range" and stop. That is the wrong conclusion and the
+        expensive one -- the answer may be sitting in a part another machine has not
+        finished yet.
+        """
+        plan = self.plan
+        if plan.of > 1:
+            return ("{}번째 구간 {:,}개를 모두 확인했지만 이 구간에는 없었습니다.\n\n"
+                    "이것은 전체 {:,}개 중 일부입니다. 패스프레이즈가 설정한 범위 밖이라는 "
+                    "뜻이 아니므로, 나머지 구간을 돌리는 다른 컴퓨터의 결과를 확인해 주세요."
+                    .format(plan.part, plan.candidate_count(), plan.total_count()))
+        return ("설정된 {:,}개 후보를 모두 확인했지만 일치하는 것이 없었습니다.\n\n"
+                "시드 문구를 잘못 입력했거나, 실제 패스프레이즈가 이 조합 범위 밖에 "
+                "있습니다. 기억나는 조각을 다시 정리해 새 설정 파일을 받아 보세요."
+                .format(plan.candidate_count()))
 
 
 def self_test_from_terminal(report_path=None):

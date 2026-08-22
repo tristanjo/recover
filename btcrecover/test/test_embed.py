@@ -27,6 +27,74 @@ whose passphrase was stored unnormalized, so the whole path has to work to find 
 
 import json, os, sys, tempfile, threading, unittest
 
+class SplitAcrossMachines(unittest.TestCase):
+    """One long search, several computers, each given the same config with a different part.
+
+    The property that matters is that the parts tile the whole exactly. An overlap wastes
+    time; a gap is worse, because the run that skipped the answer reports "not found" and
+    looks exactly like a search that genuinely came up empty.
+    """
+
+    @staticmethod
+    def part(index, of, slots=None):
+        cfg = config(slots=slots)
+        cfg["search"] = {"part": index, "of": of}
+        return embed.SearchPlan(cfg)
+
+    def bounds(self, of, slots=None):
+        return [self.part(i, of, slots).part_bounds() for i in range(1, of + 1)]
+
+    def test_the_parts_cover_everything_exactly_once(self):
+        total = embed.SearchPlan(config()).total_count()
+        for of in (1, 2, 3, 7, 100):
+            with self.subTest(of=of):
+                spans = self.bounds(of)
+                self.assertEqual(spans[0][0], 0)
+                self.assertEqual(spans[-1][1], total)
+                for before, after in zip(spans, spans[1:]):
+                    self.assertEqual(before[1], after[0])
+                self.assertEqual(sum(b - a for a, b in spans), total)
+
+    def test_more_parts_than_candidates_leaves_no_gap(self):
+        # asking for 100 parts of a 3-candidate search gives mostly empty ones, which is
+        # silly but must still add up rather than losing a candidate to rounding
+        spans = self.bounds(100)
+        self.assertEqual(sum(b - a for a, b in spans), embed.SearchPlan(config()).total_count())
+
+    def test_a_part_searches_only_its_own_stretch(self):
+        plan = self.part(2, 3)
+        start, stop = plan.part_bounds()
+        mine = list(plan.grammar.generate(skip=start, limit=stop - start))
+        self.assertEqual(len(mine), plan.candidate_count())
+        whole = list(plan.grammar.generate())
+        self.assertEqual(mine, whole[start:stop])
+
+    def test_exactly_one_part_finds_it(self):
+        found = [i for i in range(1, 4)
+                 if embed.run(self.part(i, 3), MNEMONIC).found]
+        self.assertEqual(len(found), 1, "found in parts {}".format(found))
+
+    def test_a_part_that_misses_is_not_an_error(self):
+        misses = [embed.run(self.part(i, 3), MNEMONIC) for i in range(1, 4)]
+        for r in misses:
+            self.assertIsNone(r.error)
+
+    def test_without_a_search_section_nothing_changes(self):
+        plan = embed.SearchPlan(config())
+        self.assertEqual(plan.part, 1)
+        self.assertEqual(plan.of, 1)
+        self.assertEqual(plan.part_bounds(), (0, plan.total_count()))
+        self.assertEqual(plan.candidate_count(), plan.total_count())
+
+    def test_a_part_outside_the_range_is_refused(self):
+        # a customer copying "part 8 of 7" by hand should be told, not quietly given nothing
+        for index, of in ((0, 3), (4, 3), (-1, 3)):
+            with self.subTest(part=index, of=of):
+                with self.assertRaises(GrammarError):
+                    self.part(index, of)
+
+
+
 if __name__ == '__main__':
     sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 from btcrecover import embed

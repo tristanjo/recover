@@ -207,6 +207,21 @@ class Screens(unittest.TestCase):
         self._load()
         self.assertIn("비ASCII", self._all_text())
 
+    def test_the_count_is_reconcilable_with_the_one_the_page_quoted(self):
+        """grammar.count() leaves out the normalization forms; the page's estimate does not.
+
+        Both are right and they measure different things -- the program tries each candidate
+        against every distinct Unicode form of it, inside the search rather than as separate
+        candidates. Shown side by side without that said, a customer comparing the two
+        numbers concludes one of them is wrong, which is the opposite of what showing them
+        the count is for.
+        """
+        self._load()
+        screen = self._all_text()
+        self.assertIn("{:,}개".format(self.app.plan.candidate_count()), screen)
+        self.assertIn("정규화 형태별로 최대 {}번씩".format(len(self.app.plan.normalizations)),
+                      screen)
+
     def test_mnemonic_screen_counts_words(self):
         self._load()
         self.app.show_mnemonic()

@@ -89,6 +89,52 @@ not once per separator.
 This is why the candidate count is not the plain product of the slot sizes, and why
 `count()` sums over each subset of optional slots that could go empty.
 
+## When there is nothing to remember
+
+Every other slot asks what the value might have been. A `charset` slot is for the run of
+characters where the honest answer is "no idea" — it enumerates an alphabet instead.
+
+```json
+{"type": "charset", "sets": ["lower", "upper"], "length": [1, 4]}
+```
+
+`sets` draws from `lower`, `upper`, `digits` and `symbols`, and `extra` adds characters of
+your own. Shortest first, and within a length, counting in base-N over the alphabet.
+
+It grows the way exhaustive search grows, and being able to say it is as much about learning
+that as about running it:
+
+| slot | candidates |
+|---|---|
+| `lower`, 1–4 | 475,254 |
+| `lower` + `upper`, 1–4 | 7,454,980 |
+| `lower` + `upper` + `digits`, 1–6 | 57,731,386,986 |
+
+The third row is not a search anyone should start, and that is the useful part of the
+answer. Someone who cannot express the question at all gets no number and no time — they
+leave with the same uncertainty they arrived with.
+
+## Splitting one search across several machines
+
+A long search divides into parts that tile the whole exactly. Each machine gets the same
+config with a different `part`:
+
+```json
+"search": {"part": 3, "of": 7}
+```
+
+`part_bounds()` turns that into a stretch of the fixed ordering, and the last part takes the
+remainder rather than a rounded chunk — rounding down and multiplying would leave a tail
+nobody searched, which looks exactly like a passphrase that was never in range.
+
+It is `part` and `of` rather than two indexes because those are the numbers a person can
+retype without an error nobody would notice. The ordering is fixed and the count is exact,
+so the two forms describe the same stretch; only one of them is safe to copy by hand.
+
+A part that finds nothing is not a miss. The recovery window says so on that screen, because
+"not found" after a seventh of the work reads as "it is not in this range" — the wrong
+conclusion, and the one that makes someone stop.
+
 ## Some of these words, not all of them
 
 "It was two or three of these five, I forget which" is a different shape from a slot with

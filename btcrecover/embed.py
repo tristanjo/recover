@@ -207,6 +207,25 @@ class SearchPlan:
         self.language = wallet.get("language")
         self.typos = _typo_flags(config.get("typos") or {})
 
+        # A long search split across several machines. Each gets the same config with a
+        # different `part`, and covers its own stretch of the same ordering -- so seven
+        # computers finish in a seventh of the time and none of them repeats another's work.
+        #
+        # Deliberately "part 3 of 7" rather than a pair of huge indexes: the numbers a
+        # customer would have to copy are 3 and 7, not 41,690,847 and 62,536,270. The
+        # grammar's ordering is fixed and its count is exact, so the two forms are the same
+        # thing and only one of them is safe to retype.
+        search = config.get("search") or {}
+        # `or 1` would turn a hand-typed "part": 0 into part 1 and search the wrong stretch
+        # in silence -- the failure this whole feature exists to avoid.
+        self.of = 1 if search.get("of") is None else int(search["of"])
+        self.part = 1 if search.get("part") is None else int(search["part"])
+        if self.of < 1:
+            raise GrammarError("config asks to split into {} parts".format(self.of))
+        if not 1 <= self.part <= self.of:
+            raise GrammarError("config asks for part {} of {}; part must be between 1 and {}"
+                               .format(self.part, self.of, self.of))
+
         if not self.addresses:
             raise GrammarError("config lists no wallet address; without one there is "
                                "nothing to recognise the right passphrase by")
@@ -220,7 +239,25 @@ class SearchPlan:
                 raise GrammarError("{} is not valid JSON: {}".format(path, e))
 
     def candidate_count(self):
+        """How many candidates this config covers -- this part of it, not the whole."""
+        return self.part_bounds()[1] - self.part_bounds()[0]
+
+    def total_count(self):
+        """The whole search, across every part."""
         return self.grammar.count()
+
+    def part_bounds(self):
+        """Where this part starts and stops in the whole ordering.
+
+        The last part takes the remainder, so the parts always tile the whole exactly --
+        rounding a chunk size down and multiplying would leave a tail nobody searched, which
+        is the one failure here that looks exactly like "the passphrase was not in range".
+        """
+        total = self.grammar.count()
+        chunk = -(-total // self.of)          # round up
+        start = min(total, (self.part - 1) * chunk)
+        stop = total if self.part == self.of else min(total, start + chunk)
+        return start, stop
 
     def _argv(self, mnemonic, threads=None):
         argv = [
@@ -281,13 +318,13 @@ def run(plan, mnemonic, progress=None, abort=None, threads=None, skip=0):
     if not mnemonic or not mnemonic.strip():
         return SearchResult(error="no mnemonic was entered")
 
-    total = plan.candidate_count()
-    remaining = max(0, total - skip)
+    start, stop = plan.part_bounds()
+    remaining = max(0, (stop - start) - skip)
     if not remaining:
         return SearchResult(tried=0, error="nothing left to search: skip is past the end")
 
     def candidates():
-        return plan.grammar.generate(skip=skip)
+        return plan.grammar.generate(skip=start + skip, limit=remaining)
 
     captured = io.StringIO()
     started = time.monotonic()

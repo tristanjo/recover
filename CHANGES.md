@@ -63,6 +63,57 @@ win rather than the second one failing.
 
 ---
 
+## 2026-08-22 — A slot for what nobody remembers, and one search across several machines
+
+**Changed:** `btcrecover/passphrase_grammar.py`, `btcrecover/embed.py`, `recovery_gui.py`,
+`docs/Passphrase_Grammar.md`, tests
+
+Both came from reading a reference token generator that had been left in the repository to
+be reviewed — a CLI tool for btcrecover's `--tokenlist`, built around exhaustive patterns
+like `%1,4ia` and around splitting the output so Linux does not kill it. Most of it does not
+apply: the token-file OR-syntax traps are about a format this does not produce, `--dsw` is
+already passed, and its advice to use an address with transaction history is wrong here,
+since `--addrs` derives and compares rather than looking anything up on a chain. Two things
+did.
+
+**A `charset` slot.** Every other slot asks what a value might have been. This one is for
+the run of characters where the honest answer is "no idea", and it enumerates an alphabet
+instead. `{"type": "charset", "sets": ["lower", "upper"], "length": [1, 4]}` is 7,454,980
+candidates — the same figure that reference quotes for `%1,4ia`, which is a useful check on
+both. Shortest first, then base-N over the alphabet, one priority tier per length.
+
+Its job is as much to show that a search is hopeless as to run one. Lower plus upper plus
+digits at 1–6 is 57,731,386,986, which nobody should start; someone who could not express
+the question at all left with the same uncertainty they arrived with.
+
+**`"search": {"part": 3, "of": 7}`.** The reference splits files to avoid running out of
+memory. That is not a problem here — `--skip` is O(1) and the count is exact — but splitting
+is worth having for a different reason: a three-week search becomes three days on seven
+machines, and a customer who would have given up on a laptop has an answer.
+
+The parts tile the whole exactly, with the last taking the remainder rather than a rounded
+chunk. Rounding down and multiplying leaves a tail nobody searched, and the run that skipped
+the answer reports "not found" and looks exactly like a search that genuinely came up empty.
+It is `part` and `of` rather than two indexes because 3 and 7 are numbers a person can retype
+and 41,690,847 is not.
+
+Found while writing it: `int(search.get("part") or 1)` turns a hand-typed `"part": 0` into
+part 1 and searches the wrong stretch in silence — the exact failure the feature exists to
+avoid. Refused now.
+
+The recovery window says which part it is running, before the search and again if it finds
+nothing. "Not found" after a seventh of the work reads as "it is not in this range", which
+is the wrong conclusion and the one that makes someone stop.
+
+**Also noticed while cross-checking:** the page's estimate and the program's count differ by
+the number of Unicode normalization forms — `grammar.count()` never included them, because
+the program tries each candidate's forms inside the search rather than as separate
+candidates. Both numbers are right and they measure different things, but shown side by side
+without that said, a customer comparing them concludes one is wrong. The window now says
+"(정규화 형태별로 최대 2번씩)" next to the count.
+
+---
+
 ## 2026-08-22 — Move the diagnostic page out of this repository
 
 **Changed:** removed `webapp/` and `btcrecover/test/test_webapp_model.py`;

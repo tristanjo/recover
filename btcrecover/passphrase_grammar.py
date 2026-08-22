@@ -256,6 +256,83 @@ class _DigitsSlot(_Slot):
         return tiers + ([rest] if rest else [])
 
 
+# The alphabets a charset slot can be built from. Ordered so that the values a slot yields
+# start with the characters someone is most likely to have used.
+CHARSETS = {
+    "lower":   "abcdefghijklmnopqrstuvwxyz",
+    "upper":   "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "digits":  "0123456789",
+    "symbols": "!@#$%^&*()-_=+[]{};:,.?/",
+}
+
+
+class _CharsetSlot(_Slot):
+    """Every string over a chosen alphabet whose length is in [min_len, max_len].
+
+    For the person who remembers nothing about a run of characters except roughly how long
+    it was. Every other slot type asks what the value might have been; this one is what to
+    reach for when the honest answer is "no idea".
+
+    It grows the way exhaustive search grows, and that is the point of being able to say it:
+    four lower-case letters is 475,254, and adding upper case takes the same four characters
+    to 7,454,980. A customer who cannot express this at all gets no answer; one who can gets
+    a number and a time, which is what they came for even when the answer is "not worth
+    starting".
+
+    Shortest first, and within a length, counting in base-N over the alphabet.
+    """
+
+    def __init__(self, alphabet, min_len, max_len, optional=False):
+        super().__init__(optional)
+        seen, ordered = set(), []
+        for c in alphabet:
+            if c not in seen:
+                seen.add(c)
+                ordered.append(c)
+        if not ordered:
+            raise GrammarError("charset slot has no characters to draw from")
+        if not 1 <= min_len <= max_len:
+            raise GrammarError("charset slot needs 1 <= length[0] <= length[1], got "
+                               "[{}, {}]".format(min_len, max_len))
+        self.alphabet = "".join(ordered)
+        self.min_len, self.max_len = min_len, max_len
+        base = len(self.alphabet)
+        # cumulative counts, so value_at() finds the right length by walking these
+        self.bounds, total = [], 0
+        for L in range(min_len, max_len + 1):
+            total += base ** L
+            self.bounds.append(total)
+        self.nonempty_len = total
+
+    def value_at(self, i):
+        base = len(self.alphabet)
+        offset = 0
+        for k, bound in enumerate(self.bounds):
+            if i < bound:
+                length = self.min_len + k
+                n = i - offset
+                out = []
+                for _ in range(length):
+                    n, r = divmod(n, base)
+                    out.append(self.alphabet[r])
+                return "".join(reversed(out))
+            offset = bound
+        raise IndexError(i)
+
+    def priority_tiers(self):
+        """One tier per length, shortest first.
+
+        Nothing inside a length is more likely than anything else -- that is what "no idea"
+        means -- but a shorter passphrase is likelier than a longer one, and exhausting the
+        short ones first costs nothing.
+        """
+        tiers, offset = [], 0
+        for bound in self.bounds:
+            tiers.append([(offset, bound)])
+            offset = bound
+        return tiers
+
+
 class _PoolSlot(_Slot):
     """Some of these words, not necessarily all of them.
 
@@ -348,11 +425,25 @@ def _build_slot(spec):
             return _DigitsSlot(int(length[0]), int(length[1]), optional)
         return _ListSlot([str(v) for v in spec.get("candidates", [])], optional)
 
+    if kind == "charset":
+        names = spec.get("sets") or ["lower"]
+        alphabet = ""
+        for name in names:
+            if name not in CHARSETS:
+                raise GrammarError("unknown charset '{}'; choose from {}"
+                                   .format(name, ", ".join(CHARSETS)))
+            alphabet += CHARSETS[name]
+        alphabet += str(spec.get("extra") or "")
+        length = spec.get("length")
+        if not (isinstance(length, (list, tuple)) and len(length) == 2):
+            raise GrammarError("charset slot 'length' must be [min, max]")
+        return _CharsetSlot(alphabet, int(length[0]), int(length[1]), optional)
+
     if kind in ("symbols", "fixed"):
         return _ListSlot([str(v) for v in spec.get("candidates", [])], optional)
 
-    raise GrammarError("unknown slot type '{}'; expected words, pool, digits, symbols or fixed"
-                       .format(kind))
+    raise GrammarError("unknown slot type '{}'; expected words, pool, digits, charset, "
+                       "symbols or fixed".format(kind))
 
 
 # A field shows dots, so a space at either end is invisible -- and it is easy to acquire:

@@ -476,5 +476,66 @@ class PriorityOrder(unittest.TestCase):
         self.assertRegex(deep, r"^a(-\d+)?$")
 
 
+class CharsetSlot(unittest.TestCase):
+    """For the run of characters nobody remembers anything about.
+
+    Every other slot asks what the value might have been. This one is what to reach for
+    when the honest answer is "no idea", and its job is as much to show that the search is
+    hopeless as to run it -- a customer who cannot express the question gets no answer at
+    all, while one who can at least learns the number.
+    """
+
+    @staticmethod
+    def slot(**kwds):
+        spec = {"type": "charset"}
+        spec.update(kwds)
+        return PassphraseGrammar({"passphrase": {"slots": [spec], "separators": [""]}})
+
+    def test_counts_match_the_arithmetic(self):
+        # 26 + 26^2, and the figure the reference token generator quotes for %1,4ia
+        self.assertEqual(self.slot(sets=["lower"], length=[1, 2]).count(), 702)
+        self.assertEqual(self.slot(sets=["lower", "upper"], length=[1, 4]).count(), 7_454_980)
+        self.assertEqual(self.slot(sets=["lower", "digits"], length=[3, 3]).count(), 36 ** 3)
+
+    def test_count_matches_what_it_generates(self):
+        grammar = self.slot(sets=["lower"], length=[1, 3])
+        self.assertEqual(grammar.count(), sum(1 for _ in grammar.generate()))
+
+    def test_shortest_first_then_in_order(self):
+        values = list(self.slot(sets=["lower"], length=[1, 2]).generate(limit=28))
+        self.assertEqual(values[:3], ["a", "b", "c"])
+        self.assertEqual(values[25:28], ["z", "aa", "ab"])
+
+    def test_the_last_value_is_reachable(self):
+        # value_at() walks cumulative bounds; an off-by-one there hides the final block
+        grammar = self.slot(sets=["lower"], length=[1, 2])
+        self.assertEqual(list(grammar.generate(skip=grammar.count() - 1)), ["zz"])
+
+    def test_skipping_lands_where_generating_would(self):
+        grammar = self.slot(sets=["lower", "digits"], length=[1, 3])
+        walked = list(grammar.generate(limit=5000))
+        for position in (0, 1, 35, 36, 1000, 4999):
+            with self.subTest(position=position):
+                self.assertEqual(next(iter(grammar.generate(skip=position))), walked[position])
+
+    def test_extra_characters_can_be_added(self):
+        self.assertEqual(self.slot(sets=["digits"], extra="!", length=[1, 1]).count(), 11)
+
+    def test_duplicate_characters_are_not_counted_twice(self):
+        # "digits" plus an extra "5" is still ten characters, not eleven
+        self.assertEqual(self.slot(sets=["digits"], extra="5", length=[1, 1]).count(), 10)
+
+    def test_a_bad_length_is_refused(self):
+        for length in ([0, 3], [4, 2], "nope", [1]):
+            with self.subTest(length=length):
+                with self.assertRaises(GrammarError):
+                    self.slot(sets=["lower"], length=length).count()
+
+    def test_an_unknown_charset_is_refused(self):
+        with self.assertRaises(GrammarError):
+            self.slot(sets=["klingon"], length=[1, 2]).count()
+
+
+
 if __name__ == '__main__':
     unittest.main()
