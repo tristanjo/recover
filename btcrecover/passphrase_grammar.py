@@ -38,6 +38,8 @@ out in a fixed order, which makes an interrupted search resumable.
 
 import itertools, json, math, sys
 
+from btcrecover.hangul_keys import to_keystrokes
+
 __all__ = ["PassphraseGrammar", "GrammarError"]
 
 
@@ -171,7 +173,15 @@ def _build_slot(spec):
                 raise GrammarError("unknown case transform '{}'; choose from {}"
                                    .format(c, ", ".join(CASES)))
         # word-major, so every form of the first word is tried before the second
-        values = [CASES[c](w) for w in words for c in cases]
+        values = []
+        for w in words:
+            for c in cases:
+                values.append(CASES[c](w))
+            if spec.get("keystrokes"):
+                # What a keyboard sends for this word with the Korean IME switched off.
+                # Appended after the word's own forms: someone who remembers a Korean word
+                # most likely did type Korean, and this is the fallback for when they did not.
+                values.append(to_keystrokes(w))
         return _ListSlot(values, optional)
 
     if kind == "digits":

@@ -17,6 +17,34 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
+## 2026-08-22 — Recover a passphrase typed with the IME switched off
+
+**Added:** `btcrecover/hangul_keys.py`, `btcrecover/test/test_hangul_keys.py`
+**Changed:** `btcrecover/passphrase_grammar.py`, `webapp/diagnostic.html`
+
+Korean is typed by pressing Latin keys and letting the IME assemble syllables. With the IME
+off, someone setting `비밀번호` stores `qlalfqjsgh`. The field shows dots, so nothing looks
+wrong, and it keeps working — the same wrong keystrokes go in every time — until the owner
+tries to enter the passphrase they believe they chose.
+
+`"keystrokes": true` on a words slot adds that form. Measured against a wallet holding
+`qlalfqjsgh2024`, with an owner who remembers `비밀번호2024`: 20,000 candidates exhausted
+without it, found at candidate 324 with it.
+
+**A Latin word costs nothing** — its IME-off form is itself, and duplicates are dropped — so
+the option is free for anyone it does not apply to. The page only asks the question when the
+words contain Hangul.
+
+The JavaScript tables are generated from `hangul_keys.py` rather than transcribed, and both
+are held to the same vectors. Two of those vectors were wrong when first written by hand
+(`왜` and `의사`); the code was right both times, which is the argument for deriving one side
+from the other.
+
+Only Hangul-to-keystrokes is handled. The reverse needs the IME's own composition automaton,
+and half of it would produce sequences no wallet ever stored.
+
+---
+
 ## 2026-08-22 — Ask whether they typed it correctly
 
 **Changed:** `btcrecover/embed.py`, `webapp/diagnostic.html`, `recovery_gui.spec`

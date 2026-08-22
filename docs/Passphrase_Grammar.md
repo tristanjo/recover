@@ -83,6 +83,47 @@ not once per separator.
 This is why the candidate count is not the plain product of the slot sizes, and why
 `count()` sums over each subset of optional slots that could go empty.
 
+## When the IME was never switched on
+
+Korean is typed by pressing Latin keys and letting the input method assemble syllables from
+them. With the IME off, those keystrokes arrive as the Latin letters themselves: someone
+setting the passphrase `비밀번호` gets `qlalfqjsgh` stored instead.
+
+A password field shows dots, so nothing looks wrong. It keeps working, because the same
+wrong keystrokes are typed every time — right up until the owner tries to enter the
+passphrase they believe they chose, into a wallet that never saw it.
+
+`"keystrokes": true` on a words slot adds that form after the word's own:
+
+```json
+{"type": "words", "candidates": ["비밀번호", "우리집"], "keystrokes": true}
+```
+
+yields `비밀번호, qlalfqjsgh, 우리집, dnflwlq`. The word comes first — someone who remembers
+Korean most likely did type Korean, and this is the fallback for when they did not.
+
+**A Latin word costs nothing.** Its IME-off form is itself, and duplicates are dropped, so
+the option can be left on for an English passphrase without widening the search at all.
+
+Standard 두벌식, which is what an unmodified Korean Windows or macOS types. The tables live
+in `btcrecover/hangul_keys.py`, and `webapp/diagnostic.html` carries a copy generated from
+them — `btcrecover/test/test_hangul_keys.py` holds the vectors both must satisfy, because a
+page that quotes one search while the program runs another is worse than no page.
+
+Only this direction is handled. Going the other way — Latin typed while the IME was on —
+would need the composition automaton the IME itself runs, and a half-done version of it
+would produce sequences a wallet never stored.
+
+### Measured
+
+A wallet whose passphrase was stored as `qlalfqjsgh2024`, searched with an owner who
+remembers `비밀번호2024`:
+
+| | candidates | result |
+|---|---|---|
+| without the option | 20,000 | exhausted, not found |
+| with it | 40,000 | **found at candidate 324**, 0.5s |
+
 ## Typos
 
 The grammar says what the passphrase was built from. Typos say the owner might not have

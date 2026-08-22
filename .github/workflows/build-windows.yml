@@ -84,6 +84,7 @@ jobs:
         run: |
           python -m unittest btcrecover.test.test_passphrase_grammar
           python -m unittest btcrecover.test.test_cjk_passphrase
+          python -m unittest btcrecover.test.test_hangul_keys
           python -m unittest btcrecover.test.test_embed
           python -m unittest btcrecover.test.test_recovery_gui
 
