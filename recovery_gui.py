@@ -195,9 +195,17 @@ class RecoveryApp(tk.Tk):
         box2 = ttk.LabelFrame(self.container, text=" 2. 동작 자가검증 ", padding=12)
         box2.pack(fill="x", pady=(0, 12))
         ttk.Label(box2, wraplength=620, justify="left",
-                  text="공개된 BIP39 테스트 벡터로 프로그램이 제대로 계산하는지 확인합니다.\n"
+                  # The answer being "TREZOR" is not a choice and not an endorsement -- it
+                  # is the passphrase written into the BIP39 specification's own test
+                  # vector, which is the entire reason this check is worth running. A value
+                  # we picked ourselves would only prove the program agrees with itself.
+                  text="BIP39 표준 문서에 실린 공개 시험값으로 계산이 맞는지 확인합니다.\n"
                        "본인의 시드 문구를 넣기 전에 먼저 돌려 보세요. 이 검증에는 본인 정보가 "
-                       "전혀 쓰이지 않습니다.").pack(anchor="w")
+                       "전혀 쓰이지 않습니다.\n"
+                       "답이 'TREZOR' 인 것은 저희가 정한 값이 아니라 BIP39 표준에 그렇게 적혀 "
+                       "있기 때문입니다. 그래서 이 결과는 다른 곳에서도 대조해볼 수 있습니다 — "
+                       "저희가 고른 값이었다면 프로그램이 제 말에 동의한다는 것밖에 증명하지 "
+                       "못합니다.").pack(anchor="w")
         self.selftest_label = ttk.Label(box2, text="", foreground="#555")
         self.selftest_label.pack(anchor="w", pady=(8, 0))
         self.selftest_button = ttk.Button(box2, text="자가검증 실행", command=self.run_self_test)
@@ -240,7 +248,7 @@ class RecoveryApp(tk.Tk):
         self.selftest_button.state(["!disabled"])
         if result.found and result.passphrase == SELF_TEST["passphrase"]:
             self.selftest_label.configure(
-                text="통과 — 알려진 정답 '{}' 을 {:.1f}초 만에 찾았습니다.".format(
+                text="통과 — 표준 문서에 적힌 답 '{}' 을 {:.1f}초 만에 찾았습니다.".format(
                     result.passphrase, result.elapsed), foreground="#15803d")
         else:
             self.selftest_label.configure(

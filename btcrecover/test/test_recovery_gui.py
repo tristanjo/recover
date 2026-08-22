@@ -144,9 +144,19 @@ class Helpers(unittest.TestCase):
                 self.assertIn(b"--self-test", done.stdout or b"")
 
     def test_the_self_test_uses_the_published_bip39_vector(self):
+        """The answer has to be one somebody else wrote down.
+
+        "TREZOR" looks like a brand name dropped into the screen for no reason, and the
+        temptation is to swap it for something plainer. It is the passphrase in BIP39's own
+        test vector, and that is the whole point: a customer can look it up somewhere that
+        is not us. A value we chose would prove only that the program agrees with itself.
+        """
         plan = embed.SearchPlan(recovery_gui.SELF_TEST["config"])
         self.assertIn(recovery_gui.SELF_TEST["passphrase"], list(plan.grammar.generate()))
         self.assertEqual(recovery_gui.SELF_TEST["passphrase"], "TREZOR")
+        self.assertEqual(recovery_gui.SELF_TEST["mnemonic"].split()[-1], "about")
+        self.assertEqual(recovery_gui.SELF_TEST["mnemonic"].split().count("abandon"), 11)
+
 
 
 # Each gate test swaps this out and puts it back; keep the real one to restore.
@@ -175,6 +185,15 @@ class Screens(unittest.TestCase):
 
     def _all_text(self):
         return "\n".join(texts(self.app.container))
+
+    def test_the_screen_says_why_the_answer_is_that_word(self):
+        # "TREZOR" unexplained reads as an endorsement, or as an arbitrary choice -- either
+        # way the check looks weaker than it is
+        self.app.show_checks()
+        self.app.update_idletasks()
+        screen = self._all_text()
+        self.assertIn("BIP39 표준", screen)
+        self.assertIn("저희가 정한 값이 아니라", screen)
 
     def test_first_screen_offers_the_self_test_before_anything_else(self):
         self.app.show_checks()
