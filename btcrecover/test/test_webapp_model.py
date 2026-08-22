@@ -204,5 +204,127 @@ class Consent(unittest.TestCase):
             self.assertNotIn(storage, self.source)
 
 
+class PathDerivation(unittest.TestCase):
+    """The page decides the derivation path from the address. So does the program.
+
+    They must decide the same thing. If the page tells a customer their bc1q address means
+    BIP84 and the program looks somewhere else, the search runs to the end and finds
+    nothing -- and there is no error to notice, only a bill for a search that never had a
+    chance. This runs both classifiers over the same addresses and compares.
+    """
+
+    # Real addresses, one of each type the page claims to recognise.
+    ADDRESSES = {
+        "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2":                          "p2pkh",
+        "12inFmZTGQ3YS2LRTHytWcSwRv3jH9yNLu":                          "p2pkh",
+        "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy":                          "p2sh",
+        "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4":                  "p2wpkh",
+        "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr": "p2tr",
+    }
+
+    # The purposes those types imply, which is what a path is built from.
+    PURPOSES = {"p2pkh": 44, "p2sh": 49, "p2wpkh": 84, "p2tr": 86}
+
+    def setUp(self):
+        self.source = page_source()
+
+    def page_rules(self):
+        """The page's addressKind() as (compiled pattern, kind) pairs, in order."""
+        body = self.source.split("function addressKind(addr){")[1].split("\n}")[0]
+        rules = []
+        for pattern, flags, kind in re.findall(
+                r"/\^([^/]+)/(i?)\.test\(a\)\)\s*return\s*\"(\w+)\"", body):
+            rules.append((re.compile("^" + pattern, re.I if flags else 0), kind))
+        self.assertTrue(rules, "addressKind() no longer reads as a list of prefix rules")
+        return rules
+
+    def page_kind(self, address):
+        """What addressKind() returns, including its bech32 witness-version branch."""
+        a = address.strip()
+        if re.match(r"^(bc1|tb1)", a, re.I):
+            witver = a.lower()[3:4]
+            if witver == "p":
+                return "p2tr"
+            if witver == "q":
+                threshold = int(re.search(r"a\.length\s*>\s*(\d+)", self.source).group(1))
+                return "p2wsh" if len(a) > threshold else "p2wpkh"
+            return None
+        for pattern, kind in self.page_rules():
+            if pattern.match(a):
+                return kind
+        return None
+
+    def test_the_page_agrees_with_the_program(self):
+        from btcrecover.btcrseed import WalletBIP32
+        classify = WalletBIP32._classify_address_script_type
+        for address, expected in self.ADDRESSES.items():
+            with self.subTest(address=address):
+                by_program = classify(None, address)
+                self.assertEqual(by_program, expected,
+                                 "the program's own classifier changed")
+                self.assertEqual(self.page_kind(address), by_program,
+                                 "page says {}, program says {}"
+                                 .format(self.page_kind(address), by_program))
+
+    def test_a_multisig_address_is_named_rather_than_guessed_at(self):
+        """The one case where the page must know more than the program.
+
+        A P2WSH address is bech32 witness v0 with a 32-byte program -- 62 characters where
+        a single-signature bc1q address is 42. It is how native segwit multisig is held.
+        The program returns None for it, does not filter any derivation path, and searches
+        to the end without finding anything: no error, just a search that never had a
+        chance. Matching on the bc1q prefix alone calls it BIP84, which is worse than
+        saying nothing, so the page reads the length and says what it is.
+        """
+        from btcrecover.btcrseed import WalletBIP32
+        p2wsh = "bc1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3qccfmv3"
+        self.assertEqual(len(p2wsh), 62)
+        self.assertIsNone(WalletBIP32._classify_address_script_type(None, p2wsh),
+                          "the program now classifies P2WSH; the page should too")
+
+        kind = self.page_kind(p2wsh)
+        self.assertIsNotNone(kind, "the page no longer recognises a P2WSH address")
+        self.assertNotIn(kind, self.PURPOSES,
+                         "P2WSH was given a single-key purpose; no passphrase reaches it")
+        unsupported = self.source.split("const UNSUPPORTED = {")[1].split("}")[0]
+        self.assertIn(kind, unsupported)
+
+    def test_taproot_is_not_mistaken_for_multisig(self):
+        # P2TR is also 62 characters, so a rule that went by length alone would refuse a
+        # wallet it can actually recover
+        p2tr = "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr"
+        self.assertEqual(len(p2tr), 62)
+        self.assertEqual(self.page_kind(p2tr), "p2tr")
+
+    def test_the_customer_is_told_before_they_pay(self):
+        # the failure this prevents is a bill for a search that could not have worked
+        for said in ("멀티시그", "공동서명", "찾지 못합니다"):
+            self.assertIn(said, self.source)
+
+    def test_p2sh_ambiguity_is_admitted(self):
+        # a 3... address is identical whether it is single-signature or multisig; the page
+        # must not imply it checked
+        self.assertIn('kind === "p2sh"', self.source)
+
+    def test_every_kind_maps_to_a_purpose(self):
+        purposes = dict(re.findall(r"(\w+):\s*(\d+)",
+                                   self.source.split("const PURPOSE = {")[1].split("}")[0]))
+        self.assertEqual({k: int(v) for k, v in purposes.items()}, self.PURPOSES)
+
+    def test_an_unrecognised_address_is_not_silently_narrowed(self):
+        # guessing one path for an address nobody understood would search the wrong tree
+        # in silence; trying the common four at least can succeed
+        self.assertIsNone(self.page_kind("not-an-address"))
+        derived = self.source.split("function derivationPaths(){")[1].split("\n}")[0]
+        self.assertIn("[44, 49, 84, 86]", derived)
+
+    def test_the_path_is_not_something_the_customer_picks(self):
+        # a dropdown of purposes asks a question the address already answered, and a wrong
+        # answer loses the recovery
+        self.assertNotIn('<select id="paths">', self.source)
+        self.assertIn('id="accounts"', self.source)      # what the address cannot say
+        self.assertIn('id="changechain"', self.source)
+
+
 if __name__ == '__main__':
     unittest.main()

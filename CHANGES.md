@@ -17,6 +17,44 @@ changed is exactly `git diff <that commit> HEAD` — no summary here can drift a
 
 ---
 
+## 2026-08-22 — Let the address decide the derivation path, and name a multisig one
+
+**Changed:** `webapp/diagnostic.html`, `btcrecover/test/test_webapp_model.py`
+
+The page asked the customer to pick a derivation path from a dropdown. That is a question
+the address already answers: an address starting with `1` can only have come from BIP44,
+`3` from BIP49, `bc1q` from BIP84, `bc1p` from BIP86. The program knows this and skips
+paths that do not match. Asking anyway invited a wrong answer that loses the recovery.
+
+The path is now derived from the address and shown as a finding, not a choice. What the
+address genuinely cannot say is left as controls: which **account** (0, or several) and
+whether to include **change** addresses. A collapsed field still allows a path to be typed
+outright, for wallets that never followed BIP44 at all.
+
+**A multisig address is now recognised and refused up front.** This came from a question
+about whether multisig addresses are longer. They are, in exactly one case: bech32 witness
+v0 carries a 20-byte program for single-signature (`bc1q…`, 42 characters) and a 32-byte
+one for P2WSH (62 characters), which is how native segwit multisig is held. Checked against
+the program: `_classify_address_script_type` returns `None` for P2WSH, so no derivation path
+is filtered and the search runs to the very end and finds nothing — no error, just a search
+that never had a chance.
+
+Worse, the rule written an hour earlier matched on the `bc1q` prefix alone and would have
+told the customer their multisig address was BIP84. Confidently wrong is worse than silent.
+The page now reads the length, says the address is multisig, explains that a passphrase
+cannot reach it without the co-signers' public keys, and states plainly that proceeding
+will not find anything. Taproot is also 62 characters, so the witness version is read first
+and P2TR is not caught by this.
+
+For a `3…` address there is nothing to read: P2SH single-signature and P2SH multisig are
+indistinguishable from outside. The page says so rather than implying it checked.
+
+`PathDerivation` in `test_webapp_model.py` runs the page's rules and the program's
+classifier over the same addresses and fails if they disagree — with P2WSH as the one place
+the page must know more. Verified by reverting the length check and watching it go red.
+
+---
+
 ## 2026-08-22 — Ask before measuring anyone's computer
 
 **Changed:** `webapp/diagnostic.html`, `btcrecover/test/test_webapp_model.py`
