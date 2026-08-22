@@ -46,6 +46,19 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
 
+    # These live at job level on purpose. A step's own `env:` block is NOT in scope for
+    # that step's `if:`, so `if: env.X != ''` next to `env: X: ${{ secrets.X }}` reads as
+    # empty and the step never runs -- signing silently skipped on a build we then publish.
+    # Job-level env is in scope for step conditions. (Workflow-level env cannot see
+    # secrets at all, so it has to be here rather than at the top of the file.)
+    env:
+      MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+      MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+      MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+      MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+      MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+      MACOS_NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -95,10 +108,6 @@ jobs:
         # customer walk through System Settings to allow it, which is a poor thing to ask
         # of someone who was told to be suspicious of this program in the first place.
         if: env.MACOS_CERT_P12 != ''
-        env:
-          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
-          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
-          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
         run: |
           echo "$MACOS_CERT_P12" | base64 --decode > cert.p12
           security create-keychain -p runner build.keychain
@@ -114,6 +123,33 @@ jobs:
           codesign --force --deep --timestamp --options runtime \
             --sign "$MACOS_SIGN_IDENTITY" dist/passphrase-recovery.app
           codesign --verify --strict --verbose=2 dist/passphrase-recovery.app
+
+      - name: Say whether this build is signed
+        # A quietly unsigned release is worse than a loudly unsigned one: the customer
+        # meets Gatekeeper with no warning and no instructions. Worse still is a build
+        # where the certificate was configured and codesign did not take -- that looks
+        # exactly like success from the outside, so it is an error rather than a warning.
+        #
+        # This reads the signature itself rather than asking spctl, because spctl's answer
+        # depends on notarisation, which happens later and applies to the disk image.
+        run: |
+          if codesign -dv --verbose=4 dist/passphrase-recovery.app 2>&1 \
+               | grep -q "Authority=Developer ID Application"; then
+            echo "SIGNED=yes" >> "$GITHUB_ENV"
+            echo "Signed with a Developer ID." | tee -a "$GITHUB_STEP_SUMMARY"
+          elif [ -n "$MACOS_CERT_P12" ]; then
+            codesign -dv --verbose=4 dist/passphrase-recovery.app || true
+            echo "::error::a signing certificate is configured but the build is not signed with it"
+            exit 1
+          else
+            echo "SIGNED=no" >> "$GITHUB_ENV"
+            echo "::warning::unsigned build -- macOS will refuse the first launch"
+            {
+              echo "**This build is not signed.** macOS will block the first launch with a"
+              echo "message about an unidentified developer, or that the app is damaged."
+              echo "See docs/Verifying_The_Download.md for how to open it anyway."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Self-test the built program
         timeout-minutes: 5
@@ -158,10 +194,6 @@ jobs:
         # first launch. Stapling puts the ticket in the file so it also works offline --
         # which matters here, because the customer is told to disconnect before running it.
         if: env.MACOS_NOTARY_KEY != ''
-        env:
-          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
-          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
-          MACOS_NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER }}
         run: |
           echo "$MACOS_NOTARY_KEY" | base64 --decode > notary.p8
           xcrun notarytool submit "$PACKAGE.dmg" \
@@ -216,3 +248,15 @@ jobs:
           gh release view "$tag" >/dev/null 2>&1 || \
             gh release create "$tag" --title "$tag" --notes "Built from \`$GITHUB_SHA\`."
           gh release upload "$tag" "$PACKAGE.dmg" "$PACKAGE.dmg.sha256" --clobber
+          if [ "$SIGNED" != "yes" ]; then
+            # Say it on the page the customer downloads from, not only in a build log
+            # they will never open.
+            {
+              gh release view "$tag" --json body -q .body
+              echo
+              echo "**macOS builds in this release are not signed.** macOS will block the"
+              echo "first launch and may say the app is damaged. It is not -- see"
+              echo "\`docs/Verifying_The_Download.md\` for how to check the hash and open it."
+            } > notes.md
+            gh release edit "$tag" --notes-file notes.md
+          fi

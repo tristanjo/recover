@@ -96,3 +96,72 @@ The thing that actually protects you is not proof at all: **move the funds as so
 passphrase is found.** The program's success screen gives the steps, and the diagnostic page
 gives them before you start so there is time to get a hardware wallet. Once the coins are in
 a wallet whose seed never touched a computer, whether the old seed leaked stops mattering.
+
+---
+
+# For the maintainer: turning on macOS signing
+
+Six repository secrets switch the signing and notarising steps on. Until all six exist the
+build still runs, still self-tests, and publishes a hash — it just warns, loudly, that it is
+unsigned, and says so in the release notes as well.
+
+## 1. Enrol
+
+[developer.apple.com/programs](https://developer.apple.com/programs/) — $99 a year. An
+individual enrolment is enough; a company enrolment needs a D-U-N-S number and takes longer.
+Approval usually lands within a day or two.
+
+## 2. Create the Developer ID certificate
+
+In Xcode: Settings → Accounts → your Apple ID → Manage Certificates → **+** → *Developer ID
+Application*. Then in Keychain Access, find it under **login → My Certificates**, right-click
+→ Export, save as `.p12`, and set a password.
+
+Turn it into a secret:
+
+```bash
+base64 -i DeveloperID.p12 | pbcopy
+```
+
+Find the identity string — the whole quoted name, including the team ID in brackets:
+
+```bash
+security find-identity -v -p codesigning
+```
+
+## 3. Create an App Store Connect API key for notarising
+
+[appstoreconnect.apple.com](https://appstoreconnect.apple.com) → Users and Access → Integrations
+→ App Store Connect API → **+**. Give it the *Developer* role. Download the `.p8` — **it can
+only be downloaded once.** Note the Key ID and the Issuer ID shown on the same page.
+
+```bash
+base64 -i AuthKey_XXXXXXXXXX.p8 | pbcopy
+```
+
+## 4. Add the secrets
+
+Repository → Settings → Secrets and variables → Actions → New repository secret:
+
+| Secret | What goes in it |
+|---|---|
+| `MACOS_CERT_P12` | base64 of the `.p12` from step 2 |
+| `MACOS_CERT_PASSWORD` | the password set when exporting it |
+| `MACOS_SIGN_IDENTITY` | e.g. `Developer ID Application: Your Name (AB12CD34EF)` |
+| `MACOS_NOTARY_KEY` | base64 of the `.p8` from step 3 |
+| `MACOS_NOTARY_KEY_ID` | the Key ID |
+| `MACOS_NOTARY_ISSUER` | the Issuer ID (a UUID) |
+
+## 5. Check it took
+
+Push a tag and read the build log. The signing step prints `Signed with a Developer ID.`
+Notarisation ends with `spctl` accepting the disk image. If a certificate is configured but
+the signature did not take, the build **fails** rather than publishing something that looks
+signed from the outside — that case is worse than an unsigned build, because nobody would
+think to warn the customer.
+
+Then download the release asset on a Mac that has never seen this build and open it. It
+should open with no warning at all. If it still asks, the notarisation ticket was not
+stapled — `stapler staple` runs in the same step, and the log will say.
+
+The certificate expires after five years; the API key does not expire but can be revoked.
